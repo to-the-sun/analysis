@@ -58,12 +58,11 @@ across patterns or across the file. Measure each region on its own terms.
 2. Remove the archive from the Google Drive folder once it is extracted. Palettes
    come from that folder and are kept there, so deleting the processed
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
-   Nothing is removed from GitHub for this and no commit is made about it: the
-   repository holds no palette audio. Deleting the Drive copy destroys the only
-   stored copy of the source audio, and that is intended. The extracted palette
-   and passes stay in the batch folder, and the packaged `analyze-palettes.zip`
-   keeps a copy of every source WAV under `pattern_reports/[palettes]/`, so the
-   audio survives in the deliverables.
+   Deleting the Drive copy destroys the only stored copy of the source audio,
+   and that is intended. The extracted palette and passes stay in the batch
+   folder, and the packaged `analyze-palettes.zip` keeps a copy of every source
+   WAV under `pattern_reports/[palettes]/`, so the audio survives in the
+   deliverables.
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
