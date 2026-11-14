@@ -1,0 +1,149 @@
+# Audio Analysis, Transcription, and Synthesis Suite
+
+This repository contains a comprehensive suite of tools for audio signal processing, transient analysis, continuous pitch tracking, stem alignment, real-time Discord voice transcription, and additive sound synthesis.
+
+The project is organized into four primary subdirectories and root utility scripts:
+1. `analysis/` – Rhythmic energy tracking, spectral transient analysis, pitch stem separation, group stem pattern analysis, dominant pitch tracking, audio feature clustering, and Discord bot automation.
+2. `transcription/` – Real-time Discord voice-to-text transcription (Aqua Voice API), phonetic syllabification, custom IPA weak-vowel overrides, backward vowel histogram analysis, and AI-driven poem generation (TypeSafe Jev API).
+3. `additive_synthesis/` – Interactive additive sound synthesis engine, LaTeX/Sigma notation displays, preset management, psychoacoustic analysis test suite, and generative sound creation.
+4. `analysis/flux_separator.c` / `analysis/flux_separator.exe` – C-based Spectral Flux Pitch Separator writing each stem's modified flux WAV and recombining them into the flux WAV the later tools consume. `--debug` (double-click `flux_separator_debug.bat`) additionally writes the peak/trough markers and the interactive HTML flux reports. Supports single-file, multi-file drag-and-drop, and automatic directory scanning with multi-threaded concurrent CPU execution.
+5. `tune_stems.py` – Continuous interval-relative pitch alignment for song stems.
+6. `restless_virtuoso/` – Real-time ASIO monitor: plays selected audio-interface input channels on selected ASIO outputs with gain and level meters, and plays MIDI input through a built-in sine synth or forwards it to a MIDI output. Build and usage: `restless_virtuoso/README.md`.
+
+---
+
+## 1. Perfect Reconstruction Pitch Stem Separator (`analysis/flux_separator.c`)
+
+Separates an audio file into individual MIDI integer pitch stems ($0..127$, representing C-1 to G9) using a Short-Time Fourier Transform (STFT) COLA filter bank. Every detected pitch present in the audio file is exported to a separate 16-bit PCM WAV file inside a `pitch_stems/` directory.
+
+**Key Features:**
+- **Perfect Reconstruction & Active Duration Filtering**: Summing all exported pitch stems sample-by-sample reconstructs the original audible notes perfectly. Applies a segmented noise gate on each separated pitch stem audio, zeroing out any audio segment bounded on either side by at least 1 millisecond of silence if it never rises above the global 19% noise floor ratio (`g_noise_floor_ratio`), and exporting WAV files for stems with at least $99\text{ ms}$ of active frames.
+- **Companion Transience (Flux) WAV Output**: For every audible pitch stem, `flux_separator` calculates its frame-by-frame spectral flux throughout time, normalized against the individual stem's peak flux, holds that raw transience envelope in memory only, evaluates peak salience scores (counting peaks iterated in either direction before finding an equal or greater peak), normalizes salience scores using a thinned percentile rank within the ordered list of unique salience integers (`rank / num_unique`), and multiplies each sample in the hill between troughs of its respective peak by the peak's normalized salience score to generate `<basename>_pitch_<03d>_<note_name>_modified_flux.wav` next to the pitch stems in `pitch_stems/`. For each analyzed audio file, `flux_separator` also recombines all modified flux pitch stems into a single buffer, normalizes its peak amplitude to 1.0, and exports it as `<basename>_recombined_modified_flux.wav` in the `[flux]` subfolder. Those per-stem modified flux WAVs and that recombined WAV are everything a normal run writes, and they are what the analysis consumes: the per-stem WAVs are the stems fed to `analyze.exe`, and the recombined WAV is the audio it slices candidate patterns from. With `--debug` (double-click `flux_separator_debug.bat` next to `flux_separator.exe`) `flux_separator` additionally detects peak and trough markers and writes the per-file report data (`[flux]/<basename>_flux_data/`, holding the original audio and the raw and modified flux envelopes as base64 mono PCM (a resident coarse tier plus per-resolution chunk files the report loads on demand)), the per-file interactive report (`[flux]/<basename>_index.html`, showing peak and trough hash marks and playing the original audio file in place) and, in multi-file or directory mode, the master batch dashboard (`pitch_stems/[flux]/index.html`). Outputs use `<basename>` in their filenames to prevent collisions.
+- **Double-Click & Drag-and-Drop (Multi-File & Multithreaded)**:
+  - **Multi-File Drag & Drop**: Drag single or multiple WAV files (or folders) directly onto `flux_separator.exe` or pass multiple file paths as arguments.
+  - **Double-Click Folder Scanning**: Double-clicking `flux_separator.exe` without arguments automatically scans its current folder for all WAV files (ignoring generated stems, `preview.wav`, and `glued.wav`) and processes them simultaneously using POSIX worker threads across all available CPU cores.
+  - **Automatic Helper File Copying**:
+    - When `flux_separator.exe` runs, it searches its folder for `analyze_group.bat`, `analyze.exe`, and `song_builder.exe` and automatically copies these files into the newly created `pitch_stems/` folder if found (the originals stay where they are).
+    - When `analyze.exe --group` runs (launched by `analyze_group.bat` inside `pitch_stems/`), it creates `[palettes]/[stems]/` and immediately copies `song_builder.exe` from its own folder into it, leaving the original where it is.
+
+**Compilation & Usage:**
+```bash
+# Build native Linux/macOS binaries and cross-compile Windows executables in analysis/:
+make
+
+# Usage:
+./analysis/flux_separator file1.wav file2.wav ... # Multi-file Spectral Flux Analysis (Linux / macOS)
+analysis/flux_separator.exe file1.wav file2.wav # Multi-file Spectral Flux Analysis (Windows)
+./analysis/flux_separator                         # Double-click / scan current directory for all WAVs
+analysis/flux_separator_debug.bat                # Windows: same scan with --debug (peak/trough markers and HTML reports)
+```
+
+---
+
+## 2. Stem Tuning & Alignment (`tune_stems.py`)
+
+Performs high-quality, continuous, time-varying pitch alignment of song stems relative to a "00" prepended base stem (e.g. `00_bass.wav`). Uses `librosa` for continuous pitch tracking, temporal Gaussian smoothing, and calls `rubberband` with `--pitchmap` to execute time-varying pitch shifting while preserving multi-channel layouts and song duration.
+
+**Usage:**
+```bash
+python3 tune_stems.py --stem-dir "path/to/stems" [options]
+```
+
+---
+
+## 3. Audio Analysis Suite (`analysis/`)
+
+Focuses on identifying rhythmic transient energy, dominant pitch tracking, structural audio patterns, stem pattern correlation, and feature clustering.
+
+### Interactive Transient Reports & Pattern Analysis (`analyze`)
+Pure C offline cumulative transience analyzer (`analyze` / `analyze.exe`) generating palette pattern maps, loop/stem WAV slices, JSON manifests, and interactive HTML reports.
+
+### Group Analysis & Song Building (`analyze_group.bat` & `song_builder`)
+- `analyze_group.bat`: Executes multi-file grouped stem analysis across all stems in a palette directory. `analyze.exe` itself copies `song_builder.exe` into `[palettes]/[stems]/` as soon as it creates that folder, leaving the original in place.
+- `song_builder`: Rates candidate pattern sets with 4-band cumulative transience. Each pattern in a proposed song runs through its own analyzer, they all share one group history, and their scores are summed into a song rating. A random pattern starts the song, random remaining patterns are proposed one at a time, and a pattern is added only when it raises the rating; proposals continue until a full round adds nothing. Selected pattern stems are copied into `[song]/`, `[song]/finished_song.wav` is built (omitting leading blank space so the first non-zero sample is at index zero), and an interactive rating report (`song_rating_report.html`) is exported.
+
+### Pitch Tracking & Tuning Regression (`pitch_tracker.py`)
+Analyzes polyphonic recordings for continuous dominant pitch and steady tuning regression over time using YIN, pYIN, or PipTrack algorithms. Outputs high-resolution 2-panel visual plots (`.png`) with spectrogram overlays and fractional MIDI gridlines, as well as detailed CSV exports with cent deviations (`+12c`, `-34c`).
+
+**Usage:**
+```bash
+python3 analysis/pitch_tracker.py "path/to/audio.wav" --algo piptrack
+```
+
+### Feature Extraction & Archetype Clustering (`generate_and_cluster.py`)
+Generates structured test audio files, extracts MFCCs, spectral centroid, spectral flatness, chroma, and onset-envelope autocorrelation features, and exports PCA and t-SNE projection visualizations (`cluster_analysis.png`).
+
+---
+
+## 4. Real-Time Transcription & Poetic Analysis Suite (`transcription/`)
+
+Provides real-time voice-to-text capabilities for Discord voice channels with phonetic syllabification, custom IPA weak-vowel overrides, and AI-driven poetic analysis.
+
+### Aqua Voice Transcription Bot (`transcription_bot_aqua.py`)
+- **DAVE Decryption**: Handles Discord's End-to-End Encryption (DAVE) using custom `discord.ext.voice_recv` patches with AES-GCM decryption and sequence number handling.
+- **Voice Activity Detection**: Uses RMS-based VAD with a 300ms pre-roll lookahead buffer and a 10-second accumulated audio threshold.
+- **Phonetic IPA & Syllabification**: Uses `eng-to-ipa` and Maximal Onset Principle (MOP) syllabification, enhanced by over 8,000 custom weak-vowel IPA overrides (`ipa_overrides.json`) to correct standard CMU schwa reductions.
+- **Formatting**: Interleaves phonetic IPA transcriptions below text messages and caps message sizes under 1950 characters to prevent Discord HTTP 400 errors.
+
+### Local & Desktop Transcribers (`desktop_transcriber.py` & `desktop_audio.py`)
+- `desktop_transcriber.py`: Captures local desktop loopback audio via `soundcard`, downsamples to 16kHz mono, transcribes via Aqua Voice API, and posts to Discord `#world`.
+- `desktop_audio.py`: Streams system desktop audio directly into Discord voice channels via a custom `discord.AudioSource`.
+
+### Poetic Analysis & Jev Grammar Reordering (`analyze_transcript.py` & `jev_api.py`)
+- **Vowel Histogram & Syllable Matching**: Tracks syllable vowel sounds backward to discover optimal line repetition distances.
+- **Couplet Construction & Jev Evaluation**: Reconstructs plain candidate couplets without capitalizations, saves them to `unordered_poem_lines.txt`, and evaluates their grammatical coherence via TypeSafe Jev API (`jev_api.py`).
+- **Rhyme Formatting & Confidence Scores**: Rhyming syllables are converted to `UPPERCASE` and non-rhyming syllables to `lowercase` **after** Jev API reorders the poem couplets into `ordered_poem_lines.txt`. Each displayed couplet includes its Jev confidence score e.g. `(Jev Confidence: XX.X%)`.
+- **Slash Commands**: `/analyze` generates the ranked poem along with Jev confidence scores, `/purge` resets channel history and in-memory histogram state.
+
+### Batch Launcher (`run_transcription_bot.bat`)
+Single double-click Windows batch launcher that verifies dependencies, resolves API keys (`TYPESAFE_API_KEY` / `JEV_API_KEY`), launches `transcription_bot_aqua.py`, and maintains interactive command line context on exit or error.
+
+---
+
+## 5. Additive Sound Synthesis Suite (`additive_synthesis/`)
+
+An interactive additive sound synthesis engine and psychoacoustic analysis framework (`additive_synthesis.py`).
+
+**Features:**
+- **Step-by-Step Synthesis**: Synthesizes and visualizes evolving sinusoids step-by-step with LaTeX and compact Sigma notation (`\sum`) displays.
+- **Presets**: Includes built-in mathematical presets (`square.json`, `bell.json`, `complex.json`, 'cosmic', 'generative', and 'juicy').
+- **Psychoacoustic Analysis Suite**: Includes `test_suite.py` to evaluate Sethares Roughness, Lower Interval Limit (LIL) violations, low-frequency beating, and decay-frequency coupling.
+
+**Usage:**
+```bash
+python3 additive_synthesis/additive_synthesis.py
+python3 -m unittest additive_synthesis/test_suite.py
+```
+
+---
+
+## Installation & Dependencies
+
+### System Dependencies
+```bash
+sudo apt-get update && sudo apt-get install -y libsndfile1-dev libaubio-dev libjson-c-dev libfftw3-dev ffmpeg rubberband-cli
+```
+
+### Python Environment
+```bash
+pip install librosa numpy scipy matplotlib soundcard soundfile discord.py[voice] discord-ext-voice-recv davey cryptography faster-whisper google-genai torch transformers mido plotly playwright openai requests tqdm nltk syllables SoundsLike pydub eng-to-ipa scikit-learn Cython send2trash
+```
+
+### Linguistic Data
+```bash
+python3 -m nltk.downloader cmudict averaged_perceptron_tagger
+```
+
+---
+
+## Configuration
+
+Place a `credentials.json` file in the root or `transcription/` directory:
+```json
+{
+  "token": "YOUR_DISCORD_BOT_TOKEN",
+  "aqua_key": "YOUR_AQUAVOICE_API_KEY",
+  "typesafe_api_key": "YOUR_TYPESAFE_JEV_API_KEY"
+}
+```
+Or set environment variables: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JULES_API_KEY`, `AQUA_KEY`.

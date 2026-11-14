@@ -1,0 +1,156 @@
+# restless_virtuoso
+
+Plays selected ASIO input channels, or the WAV files in a folder, on selected ASIO
+output channels, for monitoring an audio interface at ASIO latency. MIDI input can
+be played through a built-in sine synth, drum samples or a VST instrument and/or
+forwarded to a MIDI output.
+
+The driver's own ASIO interface is used directly, so no ASIO SDK download, PortAudio
+or WASAPI is involved and no non-ASIO device can be selected.
+
+## Build
+
+```bash
+make -C restless_virtuoso   # x86_64-w64-mingw32-gcc on PATH
+```
+
+Or build with the same source in Visual Studio / MSVC as a console project linked
+against `winmm.lib` and `shell32.lib`.
+
+## Usage
+
+```bash
+restless_virtuoso.exe --list
+restless_virtuoso.exe --driver "Focusrite USB ASIO" --in 1,2 --out 1,2
+restless_virtuoso.exe --in 1 --out 1,2 --buffer 128 --rate 48000
+restless_virtuoso.exe --in none --midi-in "Keystation" --midi-out 0
+restless_virtuoso.exe "Focusrite USB ASIO Input 1.json"
+```
+
+- Without `--driver`, `Focusrite USB ASIO` is loaded when installed; otherwise the first installed driver is used.
+- `--in` / `--out` take 1-based channel numbers (`1,2`, `1-4`, `3,5-6`), default `1,2`.
+  Output channel `j` plays input channel `j`, wrapping if there are more outputs than inputs.
+- `--buffer` picks the ASIO buffer size; omitted, the driver's preferred size is used.
+- `--rate` is validated with the driver; omitted, the driver's current rate is used.
+- `--midi-in` accepts a device index from `--list` or an exact device name.
+- `--midi-out` also accepts an index or name and forwards incoming MIDI unchanged.
+
+## Settings file
+
+Drop a JSON file onto `restless_virtuoso.exe` (or pass it as the first argument)
+to start from it:
+
+```json
+{
+  "instrument": "Focusrite USB ASIO",
+  "input-channel": 1
+}
+```
+
+A folder dropped onto `restless_virtuoso.exe` (or passed as the first argument) is
+played directly, as if it were the `instrument` key, and may be longer than
+`MAX_PATH`.
+
+`instrument` is an ASIO driver or MIDI input name from `--list`, or the absolute path
+of a folder. A folder's `.wav` files play together as stems and loop when the longest
+one ends. `input-channel` is the 1-based ASIO input, or the MIDI channel for a MIDI
+device, whose messages are then streamed to the console.
+`Focusrite USB ASIO Input 1.json` is a ready template; settings files are named after
+the input device, with its exact capitalization.
+
+When `instrument` is a MIDI input, two more keys add instruments to it:
+
+```json
+{
+  "instrument": "Keystation",
+  "input-channel": 1,
+  "samples_path": "C:\\samples",
+  "vsts_path": "C:\\VSTs",
+  "samples_ratio": 50
+}
+```
+
+- `samples_path` loads every `.wav` under the folder and its subfolders as drum
+  samples. Each of the 128 MIDI notes gets one by the taste lottery, and a note-on
+  plays it.
+- `vsts_path` loads every 64-bit VST 2 `.dll` under the folder and its subfolders,
+  then picks one by the taste lottery and sets a preset on it the same way. Plugins
+  without factory presets keep their default. `vsti_stats.txt` in that folder supplies the
+  real preset count and MIDI range for each plugin:
+
+  ```json
+  {
+    "Serum.dll" : { "range" : [ 24, 96 ], "presets" : 128 },
+    "Vital.dll" : { "range" : [ 0, 127 ], "presets" : 300 }
+  }
+  ```
+
+  Entries are named by their `.dll` file name or the plugin's own name,
+  case-insensitive. `presets` is how many presets the plugin actually has, and
+  random presets are drawn from it instead of the count the plugin reports. `range`
+  is the MIDI notes the plugin handles: notes outside it wrap around into it. Every
+  `new sound` on a VST also shifts all its notes by a random -6 to +6 octaves before
+  that wrap, enough to move middle C anywhere in 0-127. `vst_stats.txt` is read when
+  `vsti_stats.txt` is not there.
+- `samples_ratio` is the percentage chance, 0 to 100 (default 50), that a new sound
+  comes from `samples_path` instead of `vsts_path` when both are loaded. Only one of
+  them plays.
+- `taste` holds, in whole seconds, how long each drum sample and each preset of
+  each plugin has sounded above -60 dBFS. A second counts in full if the sound
+  peaked above the gate anywhere in it. Every entry starts at 1; `new sound` draws
+  by weighted lottery with one ticket per second of taste, once over all presets
+  and once per MIDI note over the drum samples. Samples are keyed by their path
+  under `samples_path`, presets by their 1-based number under the plugin's file
+  name, e.g. `Dexed.dll`. The instance writes the session's totals back into the settings file when
+  it closes.
+
+The sine synth stays off in this mode; the loaded instrument is the sound source.
+A key that is not an existing folder is logged and ignored.
+
+A folder is mixed onto the selected outputs with no ASIO input monitoring unless
+`--in` is given. Files of any channel count play on all outputs, wrapping when there
+are more outputs than file channels, and each file's sample rate is converted to the
+driver's rate.
+
+## Loop recordings
+
+The instance playing a folder sends a loop start cue to every other running instance
+when its stems start and each time they loop. An instance started while a stems
+instance is already playing records at once, and its first pass holds the negative of
+the milliseconds that stems instance has been playing; every later pass is the
+milliseconds since the recording instance started. An instance started before the stems
+instance begins at the palette's first cue instead, its first pass at zero. The take, a
+mono mix of the outputs, streams into the `[palettes]` folder beside the stems folder as
+`palette_YYYY-MM-DD-HH-MM-SS.wav`, 16-bit PCM, and
+`passes_YYYY-MM-DD-HH-MM-SS.txt` with one `index, milliseconds 1.;` line per pass. The
+take ends, and its files are completed, when the stems instance exits or the recording
+instance is closed. Closing with the console's own close button is handled too, since
+the program waits for the files before it lets Windows end it.
+
+An instrument instance also writes `sounds_YYYY-MM-DD-HH-MM-SS.txt` beside its take,
+one `index, milliseconds number;` line recording the sound it started with and each
+`new sound`, timed from the take's start. Every running instance shares one numbered
+list of sounds, so a number identifies a drum sample set or VST preset in every take,
+and the console prints the number with the description.
+
+On startup the program lists every installed ASIO driver, then every MIDI input
+device.
+
+In instrument mode, click `new sound` in the console for another random sound, drawn
+from `samples_path` or `vsts_path` by `samples_ratio`.
+
+## Notes
+
+- 64-bit Windows only; ASIO drivers are loaded in-process, so the driver must be 64-bit.
+- Supported ASIO sample formats: `Int16LSB`, `Int24LSB`, `Int32LSB`, the 16/18/20/24-bit
+  aligned `Int32LSB` variants, and `Float32LSB`. Big-endian formats are rejected.
+- ASIO is exclusive: close your DAW before starting the monitor.
+- The synth is a 16-voice sine with a short attack/release, mixed onto the first two
+  selected outputs; `--no-synth` leaves MIDI input to the MIDI thru path only.
+- Changing the sample rate or buffer size in the control panel reopens the buffers
+  automatically.
+- The master output is scaled by the Windows master volume, re-read while running.
+- A MIDI input that fails to open is retried, then reported with the Windows error code,
+  its device name and driver version, and whether it opens without a callback.
+- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages and errors.
+- At startup, the program's logs older than 7 days are moved to the Recycle Bin.
