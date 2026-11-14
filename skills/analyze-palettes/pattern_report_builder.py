@@ -812,6 +812,9 @@ def build_report(spec, out_dir, src_dir):
     os.makedirs(os.path.dirname(out_wav), exist_ok=True)
     if not os.path.exists(out_wav) or os.path.getsize(out_wav) != os.path.getsize(src_path):
         shutil.copy2(src_path, out_wav)
+    out_passes = os.path.join(out_dir, PALETTE_DIR, os.path.basename(passes_path))
+    if not os.path.exists(out_passes) or os.path.getsize(out_passes) != os.path.getsize(passes_path):
+        shutil.copy2(passes_path, out_passes)
 
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)

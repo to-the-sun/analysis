@@ -61,8 +61,8 @@ across patterns or across the file. Measure each region on its own terms.
    Deleting the Drive copy destroys the only stored copy of the source audio,
    and that is intended. The extracted palette and passes stay in the batch
    folder, and the packaged `analyze-palettes.zip` keeps a copy of every source
-   WAV under `pattern_reports/[palettes]/`, so the audio survives in the
-   deliverables.
+   WAV and its passes text file under `pattern_reports/[palettes]/`, so the
+   audio and its passes survive in the deliverables.
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
@@ -263,7 +263,8 @@ python3 pattern_report_builder.py \
 
 The builder fails if the passes file is missing. It does not reject a measured
 start for being off the pass loop grid, because pattern starts are measured, not
-chosen from the passes.
+chosen from the passes. It copies each palette's WAV and its passes text file
+into `[palettes]/`.
 
 Output layout:
 
@@ -273,6 +274,7 @@ artifacts/<batch>/
     index.html
     <audio-basename>.html
     [palettes]/<audio-basename>.wav
+    [palettes]/<passes-basename>.txt
     [data]/<audio-basename>/
       summary.js
       l8_*.js
@@ -447,6 +449,8 @@ Builder-level:
 - [ ] Coarse min/max matches the WAV at sampled bins (the builder asserts a
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
+- [ ] Each palette's passes text file is copied into `[palettes]/` beside its
+      WAV.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
@@ -477,11 +481,11 @@ unzip -t analyze-palettes.zip
 ```
 
 The archive root holds the master WAV beside the `pattern_reports/` folder.
-Include the index, all HTML reports, the `[palettes]/` WAVs, the `[data]/`
-chunks, and when a song was built, `song.html` plus `[stems]/` (stems and
-`[stems]/[data]/`). Several palettes change none of this: they share the folder
-and the one master. Do not
-include the zip inside itself. Report the final size and entry count.
+Include the index, all HTML reports, the `[palettes]/` WAVs and passes `.txt`
+copies, the `[data]/` chunks, and when a song was built, `song.html` plus
+`[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
+they share the folder and the one master. Do not include the zip inside itself.
+Report the final size and entry count.
 
 ## 8. Worked example
 
