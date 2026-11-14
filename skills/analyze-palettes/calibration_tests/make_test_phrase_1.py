@@ -19,16 +19,16 @@ W, H, DPI = 4600, 1600, 200
 LEFT, RIGHT, TOP, BOTTOM = 330, 4570, 232, 1439
 BG, WAVE, MUTED, RULE = "#07080c", "#5e6773", "#9aa2ae", "#262832"
 
-# name, color, band, band top/bottom (px), pattern start, loop, (index, segments)
-# spans, envelope range mapped onto the row, and the edge the trace grows from
+# name, color, band top/bottom (px), pattern start, loop, (index, segments) spans,
+# envelope range mapped onto the row, and the edge the trace grows from
 ROWS = [
-    ("bass", "#f12a1e", "#11090c", (232, 533), 0.0, 1.074910, [(0, 73)], (0.543, 1.135), "bottom"),
-    ("cymbal", "#f1ad03", "#110f0b", (535, 835), 2.158, 2.149700, [(0, 35)], (0.006, 0.673), "bottom"),
-    ("kick", "#3ad07d", "#091010", (837, 1137), 2.158, 2.149700, [(0, 35)], (0.001, 0.695), "top"),
-    ("kick", "#87fa96", "#0c1211", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)], (0.514, 1.143), "top"),
+    ("bass", "#f12a1e", (232, 533), 0.0, 1.074910, [(0, 73)], (0.543, 1.135), "bottom"),
+    ("cymbal", "#f1ad03", (535, 835), 2.158, 2.149700, [(0, 35)], (0.006, 0.673), "bottom"),
+    ("kick", "#3ad07d", (837, 1137), 2.158, 2.149700, [(0, 35)], (0.001, 0.695), "top"),
+    ("kick", "#87fa96", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)], (0.514, 1.143), "top"),
 ]
 
-PAD_TOP, PAD_BOTTOM = 15.5, 16.5  # px between a pattern box and its row edges
+PAD = 2  # px between a pattern box and its row edges
 
 
 def env_at(sr, x, edges):
@@ -62,23 +62,21 @@ def main():
     edges = np.linspace(0, duration, RIGHT - LEFT + 1)
     env = env_at(sr, x, edges)
 
-    for name, color, band, (top, bottom), start, loop, spans, (lo, hi), anchor in ROWS:
-        ax.add_patch(Rectangle((0, y(bottom)), duration, y(top) - y(bottom),
-                               facecolor=band, edgecolor="none", zorder=0))
-
-        for seg, count in spans:
-            for j in range(count + 1):
-                ax.plot([start + (seg + j) * loop] * 2, [y(bottom), y(top)], color=color,
-                        lw=0.7, dashes=(2.0, 2.0), zorder=1)
-            x0, x1 = start + seg * loop, start + (seg + count) * loop
-            ax.add_patch(Rectangle((x0, y(bottom - PAD_BOTTOM)), x1 - x0,
-                                   y(top + PAD_TOP) - y(bottom - PAD_BOTTOM), fill=False,
-                                   edgecolor=color, lw=1.05, zorder=2))
-
+    for name, color, (top, bottom), start, loop, spans, (lo, hi), anchor in ROWS:
         level = np.clip((env - lo) / (hi - lo), 0, 1) * (bottom - top) / (BOTTOM - TOP)
         base = y(bottom) if anchor == "bottom" else y(top)
         ax.fill_between(edges[:-1], base, base + level if anchor == "bottom" else base - level,
-                        step="post", color=WAVE, lw=0, zorder=3)
+                        step="post", color=WAVE, lw=0, zorder=0)
+        ax.add_patch(Rectangle((0, y(bottom)), duration, y(top) - y(bottom),
+                               facecolor=color, alpha=0.04, edgecolor="none", zorder=1))
+
+        for seg, count in spans:
+            for j in range(count + 1):
+                ax.plot([start + (seg + j) * loop] * 2, [y(bottom - PAD), y(top + PAD)],
+                        color=color, lw=1.05, dashes=(2.0, 2.0), zorder=2)
+            x0, x1 = start + seg * loop, start + (seg + count) * loop
+            ax.add_patch(Rectangle((x0, y(bottom - PAD)), x1 - x0, y(top + PAD) - y(bottom - PAD),
+                                   fill=False, edgecolor=color, lw=1.05, zorder=3))
 
         fig.add_artist(Rectangle((48 / W, 1 - ((top + bottom) / 2 + 7.5) / H), 15 / W, 15 / H,
                                  transform=fig.transFigure, facecolor=color,
