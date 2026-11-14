@@ -46,35 +46,23 @@ across patterns or across the file. Measure each region on its own terms.
 
 ## 0. Inputs and preparation
 
-1. Extract archives into `artifacts/<batch>/source/` and list the audio files. Keep
+1. Download the archives from the Google Drive folder
+   (`https://drive.google.com/drive/folders/1phwFvw-8xwgtFxkU1dEszvyo-UgXQhGv`),
+   extract them into `artifacts/<batch>/source/` and list the audio files. Keep
    the palette and its passes file together, and remember which archive they came
-   from: that archive names the song master. `palettes/[2026-11-12-19-7-9].zip`
-   yields the master `[2026-11-12-19-7-9].wav`. Pass the archive to
-   `song_builder.py --archive`; `finished_song.wav` is only the fallback for
-   audio that was not extracted from an archive. An archive may hold several
-   palettes; they stay in one batch and feed one song.
-   An archive over 36 MiB arrives split as `<stamp>.zip.001`, `.002`, …: one zip
-   cut into consecutive 36 MiB pieces, so the last piece holds the central
-   directory and no piece extracts alone. Join every piece of that stem, in
-   numeric order, before extracting:
-
-   ```bash
-   cat 'palettes/[2026-11-12-19-12-50].zip.001' 'palettes/[2026-11-12-19-12-50].zip.002' \
-     > 'palettes/[2026-11-12-19-12-50].zip'
-   ```
-
-   Every piece but the last is exactly 36 MiB, so a shorter one means a piece is
-   missing. The joined stem is the archive name, and it still names the master:
-   `[2026-11-12-19-12-50].wav`.
-2. Remove the archive from this repository once it is extracted. This is
-   required, not optional: `git rm palettes/<archive>.zip`, or
-   `palettes/<archive>.zip.*` for a split one, and commit the deletions on a new
-   branch like any other change. Repository changes are expected here; do not
-   leave an archive in place to avoid a commit. Deleting the archive destroys
-   the repository's only copy of the source audio, and that is intended. The
-   extracted palette and passes stay in the batch folder, and the packaged
-   `analyze-palettes.zip` keeps a copy of every source WAV under
-   `pattern_reports/[palettes]/`, so the audio survives in the deliverables.
+   from: that archive names the song master. `[2026-11-12-19-7-9].zip` yields the
+   master `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py
+   --archive`; `finished_song.wav` is only the fallback for audio that did not
+   arrive in an archive. An archive may hold several palettes; they stay in one
+   batch and feed one song.
+2. Remove the archive from the Google Drive folder once it is extracted. Palettes
+   come from that folder and are kept there, so deleting the processed
+   `<stamp>.zip` is what marks the archive done. This is required, not optional.
+   Deleting the Drive copy destroys the only stored copy of the source audio,
+   and that is intended. The extracted palette and passes stay in the batch
+   folder, and the packaged `analyze-palettes.zip` keeps a copy of every source
+   WAV under `pattern_reports/[palettes]/`, so the audio survives in the
+   deliverables.
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
@@ -338,7 +326,7 @@ holds several palettes):
 ```bash
 python3 song_builder.py --spec report-spec.json \
   --report-dir artifacts/<batch>/pattern_reports \
-  --archive palettes/'[2026-11-12-19-7-9]'.zip
+  --archive 'downloads/[2026-11-12-19-7-9].zip'
 ```
 
 `--archive` is the zip the palette and passes were extracted from. Its stem names
