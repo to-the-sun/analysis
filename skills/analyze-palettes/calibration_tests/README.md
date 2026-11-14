@@ -20,7 +20,7 @@ Outlined in this document are calibration tests which the algorithm implemented 
 
 Each test phrase below will have a key with the "correct" stats that should be derived from the audio. Floating point values such as segment lengths etc. do not need to match absolutely perfectly but they must be close. A discussion will also follow as to why the values in the key are the desired ones. It is essential to understand the intent and the purpose of these algorithms in order to build methods that will generalize to any palette seen in the future, and not just resort to any short-sighted solution that happens to generate the correct answers. 
 
-## Reading the panel
+## Reading the diagram
 
 - The gray trace is the same waveform drawn once per pattern, so every pattern
   has its own row against the shared time axis. The waveform is a single mono recording; every row comes from the same audio and nothing here is a stack of separate stems.
