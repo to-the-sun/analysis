@@ -7,7 +7,7 @@ dashed lines. Every segment in a pattern is the same length, but different patte
 measured beat positions.
 - **Pattern**: a region that repeats at one fixed loop length **for at least three
 segments**, running from its measured start to the end of its last complete
-segment. The thick rectangle bounds it. Patterns are derived by tracking some distinct fundamental element that repeats in the same place in the segment, segment by segment. This could be an identifiably unique onset or a specific pitch that occurs in the same position in the segment. Patterns are independent of each other;
+segment. The rectangle bounds it. Patterns are derived by tracking some distinct fundamental element that repeats in the same place in the segment, segment by segment. This could be an identifiably unique onset or a specific pitch that occurs in the same position in the segment. Patterns are independent of each other;
 two patterns can share a segment length and still count separately because they are tracking different contents in their repetitions, i.e. an onset in one position of the segment (and/or timbre or pitch) versus another.
 - **Phrase**: the full extent of the audio from the beginning to the end of all
 of its overlapping patterns. 
@@ -24,9 +24,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
 
 - The gray trace is the same waveform drawn once per pattern, so every pattern
   has its own row against the shared time axis. The waveform is a single mono recording; every row comes from the same audio and nothing here is a stack of separate stems.
-- The **thick outer rectangle** is the whole pattern: from its measured start to
+- The **outer rectangle** is the whole pattern: from its measured start to
   the end of its last complete segment.
-- The **thin dashed verticals** divide the row into segments, one per loop
+- The **dashed verticals** divide the row into segments, one per loop
   iteration, at the pattern's loop length.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   

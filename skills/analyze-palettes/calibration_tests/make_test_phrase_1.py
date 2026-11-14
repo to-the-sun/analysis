@@ -7,7 +7,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib import font_manager
 from matplotlib.patches import Rectangle
 from scipy.io import wavfile
 
@@ -43,9 +42,6 @@ def env_at(sr, x, edges):
 
 
 def main():
-    for f in ("Inter-Regular.ttf", "Inter-Bold.ttf"):
-        font_manager.fontManager.addfont(HERE / "fonts" / f)
-
     sr, pcm = wavfile.read(WAV)
     x = pcm.astype(np.float64) / 32768.0
     duration = len(x) / sr
@@ -82,10 +78,10 @@ def main():
                                  transform=fig.transFigure, facecolor=color,
                                  edgecolor="none", zorder=5))
         cy = 1 - (top + bottom) / 2 / H
-        fig.text(76 / W, cy + 0.5 / H, name, fontsize=12.8, color=color, fontweight="bold",
-                 family="Inter", va="baseline")
+        fig.text(76 / W, cy + 0.5 / H, name, fontsize=11.8, color=color, fontweight="bold",
+                 va="baseline")
         fig.text(76 / W, cy - 26.5 / H, f"{loop:.2f} s × {sum(c for _, c in spans)}",
-                 fontsize=8.7, color=MUTED, family="Inter", va="baseline")
+                 fontsize=8.0, color=MUTED, va="baseline")
 
     for px in (534, 836, 1138, 1439.5):
         fig.lines.append(plt.Line2D([LEFT / W, RIGHT / W], [1 - px / H] * 2,
@@ -93,16 +89,15 @@ def main():
 
     def text(x_px, y_px, s, size, color, weight="normal", ha="left"):
         fig.text(x_px / W, 1 - y_px / H, s, fontsize=size, color=color,
-                 fontweight=weight, family="Inter", ha=ha, va="baseline")
+                 fontweight=weight, ha=ha, va="baseline")
 
-    text(51, 89, WAV.name, 16.8, "#ffffff", "bold")
-    text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono · four repeating patterns",
-         9.6, MUTED)
-    text(48, 182, "thick outer rectangle = the whole pattern · "
-                  "thin dashed verticals = the division between each segment", 9.4, MUTED)
+    text(51, 89, WAV.name, 15.5, "#ffffff", "bold")
+    text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono", 8.8, MUTED)
+    text(48, 180, "outer rectangle = the whole pattern · "
+                  "dashed verticals = the division between each segment", 8.6, MUTED)
     for t in np.arange(0, duration, 5):
-        text(LEFT + t / duration * (RIGHT - LEFT), 1477, f"{t:.0f}", 8.0, MUTED, ha="center")
-    text((LEFT + RIGHT) / 2, 1531, "time (s)", 8.0, MUTED, ha="center")
+        text(LEFT + t / duration * (RIGHT - LEFT), 1477, f"{t:.0f}", 7.6, MUTED, ha="center")
+    text((LEFT + RIGHT) / 2, 1529, "time (s)", 7.6, MUTED, ha="center")
 
     fig.savefig(OUT, dpi=DPI, facecolor=BG)
 
