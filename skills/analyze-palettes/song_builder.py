@@ -139,10 +139,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     dur = song / sr
     stems, gains = [], []
     for i, reg in enumerate(regs):
-        stem = np.zeros(song)
+        stem = np.zeros(song, dtype=np.float32)
         stem[offs[i]:offs[i] + len(reg)] = reg
         stems.append(stem)
         gains.append(10 ** ((targets[i] - rms_db(reg)) / 20))
+    del regs
 
     mix = sum(s * g for s, g in zip(stems, gains))
     scale = 0.95 / (np.abs(mix).max() + 1e-12)
@@ -159,10 +160,13 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     for i, s in enumerate(stems):
         w(os.path.join(stem_dir, 'pattern_%d.wav' % (i + 1)), s * gains[i] * scale)
         names.append('pattern_%d' % (i + 1))
+    del stems
 
     stems_pcm = [wavfile.read(os.path.join(stem_dir, 'pattern_%d.wav' % (i + 1)))[1]
                  for i in range(len(pats))]
-    summed = np.sum([s.astype(np.int32) for s in stems_pcm], axis=0)
+    summed = np.zeros(song, dtype=np.int32)
+    for s in stems_pcm:
+        summed += s
     wavfile.write(master_path, sr, np.clip(summed, -32768, 32767).astype('<i2'))
     total, bins = write_levels(stems_pcm, stem_data)
 
@@ -213,7 +217,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
                 f.write(text)
 
     song_pcm = wavfile.read(master_path)[1].astype(np.int32)
-    delta = int(np.abs(np.sum([s.astype(np.int32) for s in stems_pcm], axis=0) - song_pcm).max())
+    delta = int(np.abs(summed - song_pcm).max())
     if delta > 2:
         raise RuntimeError('stem sum differs from master by %d LSB' % delta)
 
