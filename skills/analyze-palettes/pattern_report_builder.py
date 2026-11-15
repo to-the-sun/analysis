@@ -1039,6 +1039,20 @@ def main():
                 html.escape(r['basename']), html.escape(r['filename']),
                 fmt_precise(r['duration']), r['patterns'],
                 '' if r['patterns'] == 1 else 's'))
+    idx_path = os.path.join(args.out, 'index.html')
+    song_card = ''
+    if os.path.exists(idx_path) and os.path.exists(os.path.join(args.out, 'song.html')):
+        with open(idx_path) as f:
+            old_index = f.read()
+        match = re.search(r'<a class="card" href="song\.html">.*?</a>', old_index, re.S)
+        if match:
+            song_card = match.group(0)
+        else:
+            song_card = ('<a class="card" href="song.html"><strong>Song</strong>'
+                         '<span>Master plus stems &middot; arrangement view</span>'
+                         '<span class="btn">Open song</span></a>')
+    if song_card:
+        cards.insert(0, song_card)
     title = spec.get('title', 'Pattern Analysis Reports')
     desc = spec.get('description', 'Full waveforms with detected pattern regions, loop segments, zooming, playback and playhead jumping.')
     index = (INDEX_TEMPLATE
