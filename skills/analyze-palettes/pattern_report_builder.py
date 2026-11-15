@@ -482,6 +482,27 @@ function draw() {
       ctx.textAlign = 'left';
       ctx.fillText(p.name, bx1 + 5, y + 13);
     }
+    const anchorX = timeToX(p.passStart, W);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    if (anchorX >= 0 && anchorX <= W) {
+      ctx.beginPath();
+      ctx.moveTo(anchorX, y + 2);
+      ctx.lineTo(anchorX, y + LAYOUT.rowH - 2);
+      ctx.stroke();
+    } else {
+      const edge = anchorX < 0 ? 0 : W;
+      ctx.beginPath();
+      ctx.moveTo(edge + 0.5, y + 2);
+      ctx.lineTo(edge + 0.5, y + LAYOUT.rowH - 2);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = '9px monospace';
+      ctx.textAlign = anchorX < 0 ? 'left' : 'right';
+      ctx.fillText((anchorX < 0 ? '< anchor ' : 'anchor ') + p.passStart.toFixed(1) + 's',
+                   edge + (anchorX < 0 ? 4 : -4), y + 10);
+    }
     ctx.restore();
   }
 
@@ -757,10 +778,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <button class="btn" id="resetZoomBtn">Reset Zoom</button>
     <span class="view-info" id="viewInfo"></span>
   </div>
-  <div class="hint">Drag horizontally on the graph to zoom. Right-click to zoom out one level. Click the waveform or a segment to jump the playhead and play. Dashed gray lines mark pass loop points from the passes file.</div>
+  <div class="hint">Drag horizontally on the graph to zoom. Right-click to zoom out one level. Click the waveform or a segment to jump the playhead and play. White lines mark each pattern's assigned pass anchor; dashed gray lines mark the other pass loop points. An edge label means the anchor lies outside the source timeline.</div>
   <div class="legend">
     <span><span class="swatch" style="background:#b4bed2"></span>Full waveform</span>
     <span><span class="swatch" style="background:rgba(255,255,255,0.35)"></span>Segment boundaries</span>
+    <span><span class="swatch" style="background:#fff"></span>Pattern anchor</span>
     <span><span class="swatch" style="background:repeating-linear-gradient(90deg,#d6dae6 0 2px,transparent 2px 6px)"></span>Pass loop points</span>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
   </div>

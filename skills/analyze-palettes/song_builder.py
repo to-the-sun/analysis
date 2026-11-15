@@ -2,9 +2,8 @@
 """Build one song, its stems and a player page from every report in the spec.
 
    All palettes of an archive share the song. Each stem is a pattern's full
-measured region, placed once and never cut, gated or tiled. Its lead-in is the
-pattern start relative to its own pass loop point, as recorded in the report, so
-each palette's passes file fixes its part of the arrangement.
+measured region, placed once and never cut, gated or tiled. Every pattern's
+assigned pass loop point is aligned to one common song anchor.
 
 Usage:
     python3 song_builder.py --spec report-spec.json --report-dir artifacts/pattern_reports
@@ -110,18 +109,28 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
-    loop_times = {}
+    loop_times, pass_loops = {}, {}
     for base, m in metas:
         pl = m.get('passes')
-        loop_times[base] = ([float(q['loop']) for q in pl] if pl is not None
-                            else sorted({float(q['passStart']) for q in m['patterns']}))
+        if pl is not None:
+            loop_times[base] = [float(q['loop']) for q in pl]
+            pass_loops[base] = {q['index']: float(q['loop']) for q in pl}
+        else:
+            loop_times[base] = sorted({float(p['passStart']) for p in m['patterns']})
+            pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
     region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
         raise ValueError('song.starts is not used; entries come from the passes file')
-    start_s = [float(p['entry']) for _, p in pats]
+    leads = [float(p['start']) - pass_loops[base][p['pass']] for base, p in pats]
+    shift = -min(leads)
+    start_s = [max(0.0, lead + shift) for lead in leads]
+    anchors = [entry + pass_loops[base][p['pass']] - p['start']
+               for entry, (base, p) in zip(start_s, pats)]
+    if max(anchors) - min(anchors) > 1e-6:
+        raise ValueError('pattern loop anchors do not align')
 
     targets = cfg.get('targets') or [-20.0] * len(pats)
     if len(targets) != len(pats):
@@ -176,10 +185,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bins': {str(k): v for k, v in bins.items()},
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
-        'loops': [[round(p['entry'] + L - p['start'], 6)
+        'anchor': round(anchors[0], 6),
+        'loops': [[round(start_s[i] + L - p['start'], 6)
                    for L in loop_times[base]
                    if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]
-                  for base, p in pats],
+                  for i, (base, p) in enumerate(pats)],
     }
     with open(os.path.join(stem_data, 'arr.js'), 'w') as f:
         f.write('window.ARR_META = ' + json.dumps(arr_meta, separators=(',', ':')) + ';\n')
@@ -194,7 +204,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             json.dumps(p.get('color', '#4dabf7')))
         for i, (base, p) in enumerate(pats))
     summary = ('%d patterns from %d palette%s (%d:%04.1f), %d Hz mono. Each pattern plays its whole '
-               'region once from its pass lead-in; the %d stems sum to the master.'
+               'region once from its pass anchor; the %d stems sum to the master.'
                % (len(pats), len(metas), '' if len(metas) == 1 else 's',
                   int(dur // 60), dur % 60, sr, len(pats)))
     html_text = page_html('Song &mdash; ' + os.path.splitext(master_name)[0], summary, defs,
@@ -226,6 +236,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'stems': [os.path.join(stem_dir, n + '.wav') for n in names],
         'page': os.path.join(report_dir, 'song.html'),
         'bars': arr_meta['bars'], 'bar': round(bar_of[0], 4), 'duration': round(dur, 3),
+        'anchor': arr_meta['anchor'],
         'peak_db': round(20 * np.log10(np.abs(song_pcm).max() / 32768.0), 2),
         'rms_db': round(rms_db(song_pcm / 32768.0), 1),
         'clipped': int(np.sum(np.abs(song_pcm) >= 32767)),
@@ -254,6 +265,7 @@ def main():
           % (res['duration'], res['bars'], res['peak_db'], res['rms_db'], res['clipped']))
     print('stems  %d  sum delta %d LSB  gains %s'
           % (len(res['stems']), res['stem_delta_lsb'], res['gains_db']))
+    print('anchor %.3f s' % res['anchor'])
     print('entries %s' % (', '.join('%.3f' % s for s in res['entries'])))
     print('page   %s' % res['page'])
 
@@ -326,7 +338,7 @@ __HEAD__
   </div>
   <div id="stems"></div>
   <canvas id="axis" class="aaxis"></canvas>
-  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play. Gray lines mark the pass loop points inside each stem.</div>
+  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play. Gray lines mark the pass loop points inside each stem; the white line marks the shared song anchor.</div>
 </div>
 <a class="back" href="index.html">&larr; Back to reports</a>
 <script src="%5Bstems%5D/%5Bdata%5D/arr.js"></script>
@@ -569,6 +581,14 @@ function aDraw() {
         if (mx < mn) continue;
         const y1 = mid - mx / 32768 * half, y2 = mid - mn / 32768 * half;
         ctx.fillRect(px, y1, 1, Math.max(1, y2 - y1));
+      }
+    }
+    if (AM.anchor != null) {
+      const x = aX(AM.anchor, W);
+      if (x >= 0 && x <= W) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
       }
     }
     if (aDrag) {
