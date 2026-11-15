@@ -83,7 +83,7 @@ def pairs(since, until):
             if len(match) == len(PAIR) and all(modified(match[prefix]) <= until for prefix, _ in PAIR)
         }
         if any(since < modified(entry) for match in settled.values() for entry in match.values()):
-            yield "__".join(folder.relative_to(PROJECTS).parts), [settled[key][prefix] for key in sorted(settled) for prefix, _ in PAIR]
+            yield folder.relative_to(PROJECTS).parts[0], [settled[key][prefix] for key in sorted(settled) for prefix, _ in PAIR]
 
 
 def load_state():
