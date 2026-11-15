@@ -59,3 +59,60 @@ Each test phrase below will have a key with the "correct" stats that should be d
    78.11 s and 35 × 2.15 = 75.25 s. The recording is 78.9 s, so 0.79 s and
    1.50 s of tail sit outside the regions: a pattern ends at its last complete
    segment
+
+# test_phrase_2.wav
+
+![test_phrase_2](test_phrase_2.png)
+
+## Results
+
+| Tracked element | Segment length (s) | Segments | Region (s) |
+|---|---:|---:|---|
+| D chord | 1.34 | 4, 3, 3 | 0.73–6.09, 11.54–15.56, 22.14–26.16 |
+| E chord | 1.34 | 4, 3, 3 | 6.13–11.49, 16.86–20.88, 27.82–31.84 |
+| D chord | 1.58 | 3 | 33.11–37.85 |
+| pad gate | 0.67 | 31 | 0.73–21.35 |
+
+## Discussion
+
+1. **A tracked element can be a pitch rather than an instrument.** This palette is
+one gated pad, struck the same way throughout, so timbre cannot separate its
+patterns. The pitch does: the D chord is built on 293 Hz with partials at 583,
+883 and 1174 Hz plus a 183 Hz F# line, and the E chord on 330 Hz with partials
+at 657, 990 and 1313 Hz. Same gesture, different content in the segment,
+therefore two elements and two patterns. This is the rule from test_phrase_1
+that a distinct element deserves a distinct pattern even when another shares its
+region exactly.
+2. **The accent fixes the loop and the gate does not.** The pad is re-struck every
+0.67 s, but the strikes alternate by roughly 5 dB: one is the accent and the
+next is its release. Tracking the accented strike puts the loop at 1.34 s, so a
+segment holds an accent and the release that follows it. The fourth row tracks
+the bare strike instead and folds at 0.67 s. That is the nested-period case: the
+surface pulse repeats at half the loop, and the loop is what carries the accent.
+Taking 0.67 s everywhere would describe the texture but lose the pattern the
+listener hears.
+3. **A single element can have non-contiguous patterns.** The chords alternate
+every eight strikes, four loops or about 5.3 s: D, E, D, E, D, E, D. Neither
+chord's pattern is contiguous, because each is interrupted by the other chord,
+and every interruption starts a new span exactly as the breaks in the syncopated
+kick row do.
+4. **A pattern has one loop length, so a slower section is a new pattern.** The
+last D chord is gated more slowly: its accent loop measures 1.58 s where every
+earlier chord measures 1.34 s, and its strikes land at 33.11, 34.69, 36.27 and
+37.85. It is listed as a separate pattern rather than stretched across the
+earlier grid.
+5. **Starts are measured, not shared.** The seven spans begin at 0.73, 6.13, 11.54,
+16.86, 22.14, 27.82 and 33.11 s, each the first accented strike of its chord.
+Nothing is snapped to a common grid or to the 0.67 s gate, and the sliver left
+at each chord change, 0.04 s at the first two changes and 1.3–1.7 s at the rest,
+sits outside every region.
+6. **Each pattern has its own uniform grid.** The gate divides at 0.665 s, the
+chord accents at 1.34 s, and the closing D chord at 1.58 s. No grid is imposed
+across patterns. The performance breathes, its strikes landing between 0.62 and
+0.72 s apart, so each grid is the measured mean of its span and the dashes are
+that uniform idealisation, not the performed positions.
+7. **The cycle count is an integer and the remainder is dropped.** 4 × 1.34 = 5.36
+s (0.73–6.09), 31 × 0.665 = 20.615 s (0.73–21.35) and 3 × 1.58 = 4.74 s
+(33.11–37.85). The recording is 38.9 s, so the 1.07 s tail after 37.85 and every
+partial loop at a chord change sit outside the regions: a pattern ends at its
+last complete segment.
