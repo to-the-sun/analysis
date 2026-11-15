@@ -538,14 +538,12 @@ static float track_sample(const Track *track, int output)
 typedef struct {
     volatile LONG seq;
     volatile LONGLONG qpc;
-    volatile LONG elapsed;
     DWORD pid;
     wchar_t folder[1024];
 } LoopCue;
 
 static HANDLE cueMapping;
 static LoopCue *cue;
-static ULONGLONG playStart;
 
 typedef struct TakeChunk {
     struct TakeChunk *next;
@@ -594,11 +592,9 @@ static void send_loop_start(void)
     open_cue();
     if (!cue) return;
 
-    LARGE_INTEGER now, frequency;
+    LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&frequency);
     cue->qpc = now.QuadPart;
-    cue->elapsed = (LONG)((now.QuadPart - (LONGLONG)playStart) * 1000 / frequency.QuadPart);
     take.seen = InterlockedIncrement(&cue->seq);
 }
 
@@ -614,7 +610,7 @@ static void publish_palette(const wchar_t *stems)
 
     wmemcpy(cue->folder, stems, length);
     wcscpy(cue->folder + length, L"[palettes]\\");
-    cue->elapsed = 0;
+    cue->qpc = 0;
     cue->pid = GetCurrentProcessId();
 }
 
@@ -670,22 +666,29 @@ static void check_loop_cue(void)
     LARGE_INTEGER frequency;
     QueryPerformanceFrequency(&frequency);
     double ms = (double)(LONGLONG)((ULONGLONG)qpc - take.origin) * 1000.0 / (double)frequency.QuadPart;
-    add_pass(take.passCount ? ms : -(double)cue->elapsed);
+    add_pass(ms);
     take.active = take.rate > 0;
 }
 
 static void take_join(void)
 {
-    if (playlistMode || take.active || !cue || !cue->pid || !cue->folder[0]) return;
+    if (playlistMode || take.active || !cue || !cue->pid || !cue->folder[0] || !cue->qpc) return;
 
     HANDLE palette = OpenProcess(SYNCHRONIZE, FALSE, cue->pid);
-    if (palette && WaitForSingleObject(palette, 0) == WAIT_OBJECT_0) {
+    if (!palette || WaitForSingleObject(palette, 0) == WAIT_OBJECT_0) {
+        if (palette) CloseHandle(palette);
+        return;
+    }
+
+    LONGLONG lastCue = cue->qpc;
+    if (!lastCue) {
         CloseHandle(palette);
         return;
     }
 
-    LARGE_INTEGER now;
+    LARGE_INTEGER now, frequency;
     QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
 
     take.active = 1;
     take.rate = (unsigned)g.rate;
@@ -694,7 +697,16 @@ static void take_join(void)
     GetLocalTime(&take.at);
     wcsncpy(take.folder, cue->folder, 1023);
     take.folder[1023] = 0;
-    add_pass(-(double)cue->elapsed);
+    add_pass(-(double)(now.QuadPart - lastCue) * 1000.0 / (double)frequency.QuadPart);
+}
+
+static void clear_loop_cue(void)
+{
+    if (!playlistMode || !cue || cue->pid != GetCurrentProcessId()) return;
+
+    cue->pid = 0;
+    cue->qpc = 0;
+    cue->folder[0] = 0;
 }
 
 #define TAKE_CHUNK (1u << 20)
@@ -828,6 +840,7 @@ static void take_finish(void)
     }
     free(take.passMs);
     take.passMs = NULL;
+    take.passCapacity = 0;
     take.soundCount = 0;
     if (instrumentMode && g.soundNumber) {
         LARGE_INTEGER now;
@@ -2718,6 +2731,7 @@ static void shutdown_monitor(void)
     }
     if (settingsPath) save_settings(settingsPath, settingsOptions);
     take_finish();
+    clear_loop_cue();
     if (deviceEnumerator) {
         (*(EnumeratorVtbl **)deviceEnumerator)->Release(deviceEnumerator);
         deviceEnumerator = NULL;
@@ -3099,12 +3113,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         goto done;
     }
     g.started = 1;
-    if (playlistMode) {
-        LARGE_INTEGER start;
-        QueryPerformanceCounter(&start);
-        playStart = (ULONGLONG)start.QuadPart;
-        send_loop_start();
-    }
+    if (playlistMode) send_loop_start();
     log_trace("started\n");
 
     init_console_input();
@@ -3113,13 +3122,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     ULONGLONG lastDraw = 0;
     while (!g.quit) {
         pump_messages();
-
-        if (playlistMode && cue) {
-            LARGE_INTEGER at, frequency;
-            QueryPerformanceCounter(&at);
-            QueryPerformanceFrequency(&frequency);
-            cue->elapsed = (LONG)((at.QuadPart - (LONGLONG)playStart) * 1000 / frequency.QuadPart);
-        }
 
         if (InterlockedExchange(&g.reset, 0)) {
             log_line("driver settings changed, reconfiguring");
