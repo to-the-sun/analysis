@@ -2,6 +2,7 @@
 
 import ctypes
 import json
+import os
 import time
 import traceback
 import zipfile
@@ -59,8 +60,17 @@ def modified(entry):
     return datetime.fromtimestamp(entry.stat().st_mtime)
 
 
+def pair_dirs():
+    # Projects sit directly below PROJECTS; palette batches are also collected
+    # into [palettes] folders at any depth inside a project.
+    found = {entry for entry in PROJECTS.iterdir() if entry.is_dir()}
+    for root, dirs, _ in os.walk(PROJECTS):
+        found |= {Path(root, name) for name in dirs if name.lower() == "[palettes]"}
+    return sorted(found)
+
+
 def pairs(since, until):
-    for folder in sorted(entry for entry in PROJECTS.iterdir() if entry.is_dir()):
+    for folder in pair_dirs():
         found = {}
         for entry in folder.iterdir():
             name = entry.name.lower()
@@ -73,7 +83,7 @@ def pairs(since, until):
             if len(match) == len(PAIR) and all(modified(match[prefix]) <= until for prefix, _ in PAIR)
         }
         if any(since < modified(entry) for match in settled.values() for entry in match.values()):
-            yield folder.name, [settled[key][prefix] for key in sorted(settled) for prefix, _ in PAIR]
+            yield "__".join(folder.relative_to(PROJECTS).parts), [settled[key][prefix] for key in sorted(settled) for prefix, _ in PAIR]
 
 
 def load_state():
