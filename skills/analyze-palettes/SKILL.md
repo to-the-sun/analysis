@@ -269,8 +269,10 @@ python3 pattern_report_builder.py \
 
 The builder fails if the passes file is missing. It does not reject a measured
 start for being off the pass loop grid, because pattern starts are measured, not
-chosen from the passes. It copies each palette's WAV and its passes text file
-into `[palettes]/`.
+chosen from the passes. A palette with no region of at least three full segments
+is still a report with `patterns: []`; it shows its waveform and contributes no
+stems to the song. It copies each palette's WAV and its passes text file into
+`[palettes]/`.
 
 Output layout:
 

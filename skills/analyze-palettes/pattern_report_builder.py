@@ -920,11 +920,10 @@ def build_report(spec, out_dir, src_dir):
             'segments': segments,
         })
 
-    if not patterns:
-        raise ValueError('No patterns supplied for %s' % filename)
-    shift = -min(p['passLead'] for p in patterns)
-    for p in patterns:
-        p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
+    if patterns:
+        shift = -min(p['passLead'] for p in patterns)
+        for p in patterns:
+            p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []
