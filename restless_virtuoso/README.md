@@ -117,9 +117,10 @@ driver's rate.
 The instance playing a folder sends a loop start cue to every other running instance
 when its stems start and each time they loop. An instance started while a stems
 instance is already playing records at once, and its first pass holds the negative of
-the milliseconds that stems instance has been playing; every later pass is the
-milliseconds since the recording instance started. An instance started before the stems
-instance begins at the palette's first cue instead, its first pass at zero. The take, a
+the milliseconds since that stems instance last looped, so it is never further back
+than one loop of the stems; every later pass is the milliseconds since the recording
+instance started. An instance started before the stems instance begins at the palette's
+first cue instead, its first pass at zero. The take, a
 mono mix of the outputs, streams into the `[palettes]` folder beside the stems folder as
 `palette_YYYY-MM-DD-HH-MM-SS.wav`, 16-bit PCM, and
 `passes_YYYY-MM-DD-HH-MM-SS.txt` with one `index, milliseconds 1.;` line per pass. The
