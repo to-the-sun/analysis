@@ -16,23 +16,33 @@ W, H, DPI = 4600, 1600, 200
 LEFT, RIGHT, TOP, BOTTOM = 330, 4570, 232, 1439
 BG, WAVE, MUTED, RULE = "#07080c", "#5e6773", "#9aa2ae", "#262832"
 
-# name, color, band top/bottom (px), pattern start, loop, (index, segments) spans,
-# envelope range mapped onto the row, and the edge the trace grows from
+# name, color, band top/bottom (px), pattern start, loop, (index, segments) spans
 ROWS = {
     "test_phrase_1": [
-        ("bass", "#f12a1e", (232, 533), 0.0, 1.074910, [(0, 73)], (0.543, 1.135), "bottom"),
-        ("cymbal", "#f1ad03", (535, 835), 2.158, 2.149700, [(0, 35)], (0.006, 0.673), "bottom"),
-        ("kick", "#3ad07d", (837, 1137), 2.158, 2.149700, [(0, 35)], (0.001, 0.695), "top"),
-        ("kick", "#87fa96", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)], (0.514, 1.143), "top"),
+        ("bass", "#f12a1e", (232, 533), 0.0, 1.074910, [(0, 73)]),
+        ("cymbal", "#f1ad03", (535, 835), 2.158, 2.149700, [(0, 35)]),
+        ("kick", "#3ad07d", (837, 1137), 2.158, 2.149700, [(0, 35)]),
+        ("kick", "#87fa96", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)]),
     ],
     "test_phrase_2": [
         ("D chord", "#f12a1e", (232, 533), (0.73, 11.54, 22.14), 1.340,
-         [(0, 4), (0, 3), (0, 3)], (0.10, 0.60), "bottom"),
+         [(0, 4), (0, 3), (0, 3)]),
         ("E chord", "#f1ad03", (535, 835), (6.13, 16.86, 27.82), 1.340,
-         [(0, 4), (0, 3), (0, 3)], (0.10, 0.60), "bottom"),
-        ("D chord", "#3ad07d", (837, 1137), (33.11,), 1.580, [(0, 3)], (0.10, 0.60), "bottom"),
-        ("pad gate", "#87fa96", (1139, 1439), (0.73,), 0.665, [(0, 31)], (0.10, 0.60), "bottom"),
+         [(0, 4), (0, 3), (0, 3)]),
+        ("D chord", "#3ad07d", (837, 1137), (33.11,), 1.580, [(0, 3)]),
+        ("pad gate", "#87fa96", (1139, 1439), (0.73,), 0.665, [(0, 31)]),
     ],
+}
+
+# bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from
+WAVES = {
+    "test_phrase_1": [
+        (232, 533, 0.543, 1.135, "bottom"),
+        (535, 835, 0.006, 0.673, "bottom"),
+        (837, 1137, 0.001, 0.695, "top"),
+        (1139, 1439, 0.514, 1.143, "top"),
+    ],
+    "test_phrase_2": [(232, 1439, 0.12, 0.52, "bottom")],
 }
 
 TRACE = {"test_phrase_1": "peak", "test_phrase_2": "rms"}
@@ -71,14 +81,16 @@ def main(name):
     edges = np.linspace(0, duration, RIGHT - LEFT + 1)
     env = env_at(sr, x, edges, TRACE[name])
 
-    for row in ROWS[name]:
-        name_lbl, color, (top, bottom), row_start, loop, spans, (lo, hi), anchor = row
-        starts = tuple(row_start) if isinstance(row_start, tuple) else (row_start,) * len(spans)
-        total = sum(c for _, c in spans)
+    for top, bottom, lo, hi, anchor in WAVES[name]:
         level = np.clip((env - lo) / (hi - lo), 0, 1) * (bottom - top) / (BOTTOM - TOP)
         base = y(bottom) if anchor == "bottom" else y(top)
         ax.fill_between(edges[:-1], base, base + level if anchor == "bottom" else base - level,
                         step="post", color=WAVE, lw=0, zorder=0)
+
+    for row in ROWS[name]:
+        name_lbl, color, (top, bottom), row_start, loop, spans = row
+        starts = tuple(row_start) if isinstance(row_start, tuple) else (row_start,) * len(spans)
+        total = sum(c for _, c in spans)
         ax.add_patch(Rectangle((0, y(bottom)), duration, y(top) - y(bottom),
                                facecolor=color, alpha=0.04, edgecolor="none", zorder=1))
 
