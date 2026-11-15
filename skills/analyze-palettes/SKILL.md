@@ -21,7 +21,8 @@ measured, what is estimated, and where the uncertainty is.
 - **Pass**: one recorded loop cycle. Its **loop point** is the millisecond
   position at which it starts. Pass `i` spans
   `[loop_point_i, loop_point_{i+1})`; the last pass runs to the end of the file.
-  The line's optional pad is added when the pass positions a pattern.
+  The line's optional pad is retained as pass metadata but does not move the
+  loop anchor.
 - **Segment**: a single iteration of a repeating pattern. All segments within
   the same pattern have the same length.
 - **Pattern**: one contiguous repeated region of at least three segments. A
@@ -30,9 +31,11 @@ measured, what is estimated, and where the uncertainty is.
 - **Pattern region**: the span of audio the loop was measured over, from its
   start to the end of its last complete segment. This is the unit the song uses,
   whole.
-- **Lead-in**: `pattern start - pass loop point + pad`. It may be negative. The
-  earliest lead-in is shifted to 0, and the shifted value is the pattern's entry
-  in the song, in seconds. This is the `analyze.c` placement rule.
+- **Loop anchor**: the assigned pass's loop point. The song aligns every
+  pattern's loop anchor to one common song time.
+- **Lead-in**: `pattern start - pass loop point`. It may be negative. The
+  earliest lead-in across every pattern in every palette is shifted to 0, and
+  the shifted value is the pattern's entry in the song, in seconds.
 - **Song**: one master assembled from the patterns of every palette in the
   archive. Every palette contributes all of its patterns, once each. An archive
   gets one song, never one song per palette.
@@ -46,15 +49,18 @@ across patterns or across the file. Measure each region on its own terms.
 
 ## 0. Inputs and preparation
 
-1. Download the archives from the Google Drive folder
-   (`https://drive.google.com/drive/folders/1phwFvw-8xwgtFxkU1dEszvyo-UgXQhGv`),
-   extract them into `artifacts/<batch>/source/` and list the audio files. Keep
-   the palette and its passes file together, and remember which archive they came
-   from: that archive names the song master. `[2026-11-12-19-7-9].zip` yields the
-   master `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py
-   --archive`; `finished_song.wav` is only the fallback for audio that did not
-   arrive in an archive. An archive may hold several palettes; they stay in one
-   batch and feed one song.
+1. List only the direct, non-trashed children of My Drive/[palettes]
+   (`https://drive.google.com/drive/folders/1phwFvw-8xwgtFxkU1dEszvyo-UgXQhGv`).
+   Query with `trashed = false`; never process trash, shortcuts, other folders,
+   or duplicate copies. Each zip archive in that folder is a separate batch and
+   song: give it its own report folder, master and song. Extract one archive into
+   `artifacts/<archive-stem>/source/` and list its audio files. Keep the palette
+   and its passes file together, and remember which archive they came from: that
+   archive names the song master. `[2026-11-12-19-7-9].zip` yields the master
+   `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py --archive`;
+   `finished_song.wav` is only the fallback for audio that did not arrive in an
+   archive. An archive may hold several palettes; they stay in that archive's
+   batch and feed its one song.
 2. Remove the archive from the Google Drive folder once it is extracted. Palettes
    come from that folder and are kept there, so deleting the processed
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
@@ -165,23 +171,26 @@ similarity. Real loop regions score about 0.55–0.81 on the mean, and a
 frame-wise gate rejects most of them while ranking steady textures above the
 actual music.
 
-### 1c. Passes place the patterns relative to the song start
+### 1c. Passes place the patterns around one song anchor
 
-This is the `analyze.c` rule. Passes do not cut or snap patterns:
+Passes do not cut or snap patterns:
 
 1. For each pattern, assign the pass it overlaps most in time. On a tie, use the
-   earlier pass.
-2. Compute `lead = pattern.start - pass.loop_point + pass.pad`.
-3. Shift all leads by `-min(lead)` and clamp at 0. That shifted value is the
-   pattern's **entry** in seconds.
-4. The song starts each stem at its entry. A negative raw lead is normal: it
-   means the pattern starts before its pass's loop point. The earliest pattern
-   defines the song's zero.
+   earlier pass. The assigned pass's loop point is the pattern's **loop anchor**.
+2. Compute `lead = pattern.start - pass.loop_point`.
+3. Across every pattern in every palette, shift all leads by `-min(lead)` and
+   clamp at 0. That shifted value is the pattern's **entry** in seconds.
+4. Every pattern's loop anchor lands at the same song time, `-min(lead)`. This
+   is the song anchor (`arr.js`'s `anchor` and the white line in `song.html`).
+5. The song starts each stem at its entry. A negative raw lead is normal: it
+   means the pattern starts before its pass's loop point. The pattern with the
+   smallest lead defines the song's zero.
 
 Do not round the entry to a bar, and do not move a pattern start onto a loop
 point to make the lead zero. The lead is whatever the measured start and the
 assigned pass produce. In the worked example the raw leads run from −45.2 s to
-−37.3 s, so the song entries are 0–42.1 s, not bar multiples.
+−37.3 s, so the song entries are 0–42.1 s, not bar multiples, and all six loop
+anchors land at 79.396 s.
 
 ### 1d. Checks
 
@@ -263,8 +272,10 @@ python3 pattern_report_builder.py \
 
 The builder fails if the passes file is missing. It does not reject a measured
 start for being off the pass loop grid, because pattern starts are measured, not
-chosen from the passes. It copies each palette's WAV and its passes text file
-into `[palettes]/`.
+chosen from the passes. A palette with no region of at least three full segments
+is still a report with `patterns: []`; it shows its waveform and contributes no
+stems to the song. It copies each palette's WAV and its passes text file into
+`[palettes]/`.
 
 Output layout:
 
@@ -299,15 +310,19 @@ fill more time.
 
 One song is built per archive, never per palette. If the archive holds several
 palettes, every pattern of every palette becomes a stem in the same master; do
-not build a separate song for each palette and do not leave one out.
+not build a separate song for each palette and do not leave one out. If the
+folder holds several archives, they are separate batches and separate songs;
+never combine patterns from different archives. An archive with no qualifying
+pattern still gets its own report (`patterns: []`), but has no song page or
+master.
 
-The passes file decides where each pattern begins relative to the song start.
-`summary.js` stores the shifted lead-in as `entry` in seconds; `song_builder.py`
-starts the stem at that time. Each palette keeps its own passes file and its own
-lead shift, so its patterns are placed at the entries its `summary.js` records
-and every palette's earliest pattern starts at 0. There is no manual `starts`
-list, and adding `song.starts` to the spec is an error. Entries are seconds, not
-bars: the C analyzer pads each stem by the exact millisecond lead-in.
+The passes file decides where each pattern begins relative to the common song
+anchor. `summary.js` stores each report's local shifted lead as `entry`, but
+`song_builder.py` recomputes placement from `start - passStart` across every
+pattern in every palette, using one global shift. Every pattern's assigned pass
+loop point lands at the same song time, the anchor; the pattern with the
+smallest lead starts at 0. There is no manual `starts` list, and adding
+`song.starts` to the spec is an error. Entries are seconds, not bars.
 
 Add a `song` block for levels only (at the top level of the spec when the archive
 holds several palettes):
@@ -321,7 +336,8 @@ holds several palettes):
 - `targets`: pre-master RMS target in dBFS per pattern across every palette,
   in report order, default -20.
 - Patterns may differ in segment length and bar length; the builder places each
-  stem at its own entry and needs no common grid.
+  stem at the entry that puts its loop anchor on the common anchor, and needs
+  no common grid.
 - Song length is fixed by the patterns, not chosen: it is the furthest entry
   time plus that pattern's whole region, across every palette.
 
@@ -334,7 +350,7 @@ python3 song_builder.py --spec report-spec.json \
 `--archive` is the zip the palette and passes were extracted from. Its stem names
 the master WAV and the link in `song.html`; omitting it writes
 `finished_song.wav`. The builder reads the report's `summary.js` and copied WAV,
-so it uses exactly the patterns, pass lead-ins and segment grid the report shows.
+so it uses exactly the patterns, pass loops and segment grid the report shows.
 
 Output:
 
@@ -357,6 +373,7 @@ palette's.
 Guarantees:
 
 - every pattern of every palette is one stem; no palette is skipped;
+- every stem's assigned pass loop point lands at the same song anchor;
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
   anti-click ramp at each end of the region;
@@ -369,7 +386,9 @@ Guarantees:
 
 The page plays the master or all stems in sync, seeks, mutes individual stems,
 and draws one arrangement row per stem. Drag horizontally on a row to zoom,
-right-click to zoom out, Reset Zoom to return, and click to jump and play.
+right-click to zoom out, Reset Zoom to return, and click to jump and play. Gray
+vertical guides mark the other pass loop points; a bold white line marks the
+shared song anchor on every row.
 
 Song-level checks:
 
@@ -406,6 +425,11 @@ with only `summary.js`.
 The report must provide:
 
 - full-file waveform and a colored band for each pattern;
+- pass loop points from the passes file drawn as dashed gray guides with
+  `P<index>` labels on the waveform, and as dashed guides inside the pattern
+  rows;
+- the assigned pass loop point in each pattern row drawn as a bold white
+  anchor, with a white edge label when it lies outside the source timeline;
 - a row per pattern with one numbered cell per full segment;
 - clickable segment chips that jump to the segment start and play;
 - drag horizontally to zoom into a time range;
@@ -443,7 +467,12 @@ Builder-level:
 - [ ] `summary.js` parses; duration, sample rate, pattern count and segment
       count match the spec.
 - [ ] Every pattern has `pass`, `passStart`, `passLead` and `entry`; `entry` is
-      the raw lead shifted by the minimum lead.
+      the raw lead shifted by that report's minimum lead.
+- [ ] When a song is built, `arr.js` has one `anchor`; every pattern's global
+      entry (`start - passStart + anchor`) puts its loop point at `anchor`
+      within 0.001 s.
+- [ ] Every report row shows its assigned pass anchor in white; every song stem
+      row shows the shared anchor in white and the other pass loops in gray.
 - [ ] Every pattern's segments are exactly `length` long; no partial tail
       segment exists.
 - [ ] Coarse min/max matches the WAV at sampled bins (the builder asserts a
@@ -484,8 +513,9 @@ The archive root holds the master WAV beside the `pattern_reports/` folder.
 Include the index, all HTML reports, the `[palettes]/` WAVs and passes `.txt`
 copies, the `[data]/` chunks, and when a song was built, `song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
-they share the folder and the one master. Do not include the zip inside itself.
-Report the final size and entry count.
+they share the folder and the one master. Package each archive's batch
+separately when the folder held more than one archive. Do not include the zip
+inside itself. Report the final size and entry count.
 
 ## 8. Worked example
 
@@ -504,10 +534,10 @@ number of 1.826 s bars.
 | 5 | 24 | 380.00–470.00 | 7.288 | 4 | −38.822 | 40.573 | 12 |
 | 6 | 26 | 470.00–574.80 | 5.451 | 3 | −40.134 | 39.261 | 19 |
 
-Pattern 2 has the lowest raw lead (−79.395 s), so it defines the song start at
-0; the others enter 8.965, 34.201, 39.261, 40.573 and 42.080 s in. An archive
-holding several palettes measures each the same way and places all their
-patterns in one song. The song is
+Pattern 2 has the lowest raw lead (−79.396 s), so it defines the song start at
+0; the others enter 8.965, 34.201, 39.261, 40.573 and 42.080 s in. All six loop
+anchors land at 79.396 s. An archive holding several palettes shares one global
+shift, so all their patterns land on the same song anchor. The song is
 142.83 s (78 bars), peak −0.5 dBFS, RMS −17.8 dBFS, 0 clipped; all six stems
 sum to the master with 0 LSB, and each stem is silent before its entry and after
 its region.
@@ -516,13 +546,19 @@ its region.
 
 - An archive with several palettes still makes one song. Do not build a song
   per palette, and do not keep one palette and discard the rest.
+- Multiple zip archives in My Drive/[palettes] are separate batches and songs.
+  Do not combine their reports or stems. A zero-pattern archive has no song page.
+- Only direct, non-trashed children of My Drive/[palettes] are inputs. Never
+  process trash, shortcuts, other folders, or duplicate copies.
 - Passes place patterns; they do not define them. Do not force a pattern start
   onto a pass loop point. Doing so makes every lead-in zero and destroys the
-  alignment `analyze.c` produces.
-- Do not round the lead-in to bars. `analyze.c` pads stems by exact
-  milliseconds; the song builder starts stems at those seconds.
-- A negative raw lead-in is normal. Shift all leads by the minimum; never clamp
-  individual leads to zero before shifting.
+  measured placement.
+- Do not round the lead-in to bars. The song builder starts stems at exact
+  anchor-relative seconds.
+- A negative raw lead-in is normal. Shift all leads by the global minimum
+  across every palette; never clamp individual leads to zero before shifting.
+- Do not shift each palette independently. That puts their loop anchors at
+  different song times; one global shift aligns them.
 - A passes file is required. Do not guess a placement or use a staggered
   default when it is missing.
 - `song.starts` is gone. Entries come from the passes file; do not reintroduce

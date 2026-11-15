@@ -346,6 +346,20 @@ function draw() {
     ctx.fillRect(px, Math.min(y1, y2), 1, Math.max(1, Math.abs(y2 - y1)));
   }
 
+  ctx.save();
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = 'rgba(196,202,216,0.42)';
+  ctx.lineWidth = 1;
+  for (const pass of META.passes) {
+    const x = timeToX(pass.loop, W);
+    if (x < 0 || x > W) continue;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, LY.waveTop);
+    ctx.lineTo(x + 0.5, LY.waveBottom);
+    ctx.stroke();
+  }
+  ctx.restore();
+
   for (const p of PATTERNS) {
     const x1 = timeToX(p.start, W);
     const x2 = timeToX(p.end, W);
@@ -390,6 +404,24 @@ function draw() {
     }
   }
 
+  ctx.save();
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  let lastPassLabel = -1e9;
+  for (const pass of META.passes) {
+    const x = timeToX(pass.loop, W);
+    if (x < 0 || x > W - 2) continue;
+    if (x - lastPassLabel < 20) continue;
+    const label = 'P' + pass.index;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(13,13,17,0.72)';
+    ctx.fillRect(x + 2, LY.waveBottom - 15, tw + 4, 12);
+    ctx.fillStyle = 'rgba(214,218,230,0.92)';
+    ctx.fillText(label, x + 4, LY.waveBottom - 5);
+    lastPassLabel = x;
+  }
+  ctx.restore();
+
   for (let i = 0; i < PATTERNS.length; i++) {
     const p = PATTERNS[i];
     const y = LY.rowTop + i * (LAYOUT.rowH + LAYOUT.rowGap);
@@ -423,6 +455,20 @@ function draw() {
         ctx.fillText(String(k + 1), (ax + bx) / 2, y + 23);
       }
     }
+    ctx.save();
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = 'rgba(214,218,230,0.45)';
+    ctx.lineWidth = 1;
+    for (const pass of META.passes) {
+      if (pass.loop < p.start || pass.loop > p.end) continue;
+      const px = timeToX(pass.loop, W);
+      if (px < 0 || px > W) continue;
+      ctx.beginPath();
+      ctx.moveTo(px + 0.5, y + 4);
+      ctx.lineTo(px + 0.5, y + LAYOUT.rowH - 4);
+      ctx.stroke();
+    }
+    ctx.restore();
     const bx1 = Math.max(0, x1);
     const bx2 = Math.min(W, x2);
     if (bx2 > bx1) {
@@ -435,6 +481,27 @@ function draw() {
       ctx.font = '600 10px monospace';
       ctx.textAlign = 'left';
       ctx.fillText(p.name, bx1 + 5, y + 13);
+    }
+    const anchorX = timeToX(p.passStart, W);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    if (anchorX >= 0 && anchorX <= W) {
+      ctx.beginPath();
+      ctx.moveTo(anchorX, y + 2);
+      ctx.lineTo(anchorX, y + LAYOUT.rowH - 2);
+      ctx.stroke();
+    } else {
+      const edge = anchorX < 0 ? 0 : W;
+      ctx.beginPath();
+      ctx.moveTo(edge + 0.5, y + 2);
+      ctx.lineTo(edge + 0.5, y + LAYOUT.rowH - 2);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = '9px monospace';
+      ctx.textAlign = anchorX < 0 ? 'left' : 'right';
+      ctx.fillText((anchorX < 0 ? '< anchor ' : 'anchor ') + p.passStart.toFixed(1) + 's',
+                   edge + (anchorX < 0 ? 4 : -4), y + 10);
     }
     ctx.restore();
   }
@@ -711,10 +778,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <button class="btn" id="resetZoomBtn">Reset Zoom</button>
     <span class="view-info" id="viewInfo"></span>
   </div>
-  <div class="hint">Drag horizontally on the graph to zoom. Right-click to zoom out one level. Click the waveform or a segment to jump the playhead and play.</div>
+  <div class="hint">Drag horizontally on the graph to zoom. Right-click to zoom out one level. Click the waveform or a segment to jump the playhead and play. White lines mark each pattern's assigned pass anchor; dashed gray lines mark the other pass loop points. An edge label means the anchor lies outside the source timeline.</div>
   <div class="legend">
     <span><span class="swatch" style="background:#b4bed2"></span>Full waveform</span>
     <span><span class="swatch" style="background:rgba(255,255,255,0.35)"></span>Segment boundaries</span>
+    <span><span class="swatch" style="background:#fff"></span>Pattern anchor</span>
+    <span><span class="swatch" style="background:repeating-linear-gradient(90deg,#d6dae6 0 2px,transparent 2px 6px)"></span>Pass loop points</span>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
   </div>
 </header>
@@ -851,11 +920,10 @@ def build_report(spec, out_dir, src_dir):
             'segments': segments,
         })
 
-    if not patterns:
-        raise ValueError('No patterns supplied for %s' % filename)
-    shift = -min(p['passLead'] for p in patterns)
-    for p in patterns:
-        p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
+    if patterns:
+        shift = -min(p['passLead'] for p in patterns)
+        for p in patterns:
+            p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []
@@ -876,6 +944,8 @@ def build_report(spec, out_dir, src_dir):
         'coarseBins': int(coarse_bins),
         'levels': levels_meta,
         'passesFile': os.path.basename(passes_path),
+        'passes': [{'index': s['index'], 'loop': round(s['loop'], 6),
+                    'pad': round(s['pad'], 6)} for s in spans],
         'patterns': patterns,
     }
     with open(os.path.join(data_dir, 'summary.js'), 'w') as f:
@@ -968,6 +1038,20 @@ def main():
                 html.escape(r['basename']), html.escape(r['filename']),
                 fmt_precise(r['duration']), r['patterns'],
                 '' if r['patterns'] == 1 else 's'))
+    idx_path = os.path.join(args.out, 'index.html')
+    song_card = ''
+    if os.path.exists(idx_path) and os.path.exists(os.path.join(args.out, 'song.html')):
+        with open(idx_path) as f:
+            old_index = f.read()
+        match = re.search(r'<a class="card" href="song\.html">.*?</a>', old_index, re.S)
+        if match:
+            song_card = match.group(0)
+        else:
+            song_card = ('<a class="card" href="song.html"><strong>Song</strong>'
+                         '<span>Master plus stems &middot; arrangement view</span>'
+                         '<span class="btn">Open song</span></a>')
+    if song_card:
+        cards.insert(0, song_card)
     title = spec.get('title', 'Pattern Analysis Reports')
     desc = spec.get('description', 'Full waveforms with detected pattern regions, loop segments, zooming, playback and playhead jumping.')
     index = (INDEX_TEMPLATE

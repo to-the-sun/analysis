@@ -2,9 +2,8 @@
 """Build one song, its stems and a player page from every report in the spec.
 
    All palettes of an archive share the song. Each stem is a pattern's full
-measured region, placed once and never cut, gated or tiled. Its lead-in is the
-pattern start relative to its own pass loop point, as recorded in the report, so
-each palette's passes file fixes its part of the arrangement.
+measured region, placed once and never cut, gated or tiled. Every pattern's
+assigned pass loop point is aligned to one common song anchor.
 
 Usage:
     python3 song_builder.py --spec report-spec.json --report-dir artifacts/pattern_reports
@@ -110,13 +109,28 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
+    loop_times, pass_loops = {}, {}
+    for base, m in metas:
+        pl = m.get('passes')
+        if pl is not None:
+            loop_times[base] = [float(q['loop']) for q in pl]
+            pass_loops[base] = {q['index']: float(q['loop']) for q in pl}
+        else:
+            loop_times[base] = sorted({float(p['passStart']) for p in m['patterns']})
+            pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
     region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
         raise ValueError('song.starts is not used; entries come from the passes file')
-    start_s = [float(p['entry']) for _, p in pats]
+    leads = [float(p['start']) - pass_loops[base][p['pass']] for base, p in pats]
+    shift = -min(leads)
+    start_s = [max(0.0, lead + shift) for lead in leads]
+    anchors = [entry + pass_loops[base][p['pass']] - p['start']
+               for entry, (base, p) in zip(start_s, pats)]
+    if max(anchors) - min(anchors) > 1e-6:
+        raise ValueError('pattern loop anchors do not align')
 
     targets = cfg.get('targets') or [-20.0] * len(pats)
     if len(targets) != len(pats):
@@ -134,10 +148,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     dur = song / sr
     stems, gains = [], []
     for i, reg in enumerate(regs):
-        stem = np.zeros(song)
+        stem = np.zeros(song, dtype=np.float32)
         stem[offs[i]:offs[i] + len(reg)] = reg
         stems.append(stem)
         gains.append(10 ** ((targets[i] - rms_db(reg)) / 20))
+    del regs
 
     mix = sum(s * g for s, g in zip(stems, gains))
     scale = 0.95 / (np.abs(mix).max() + 1e-12)
@@ -154,10 +169,13 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     for i, s in enumerate(stems):
         w(os.path.join(stem_dir, 'pattern_%d.wav' % (i + 1)), s * gains[i] * scale)
         names.append('pattern_%d' % (i + 1))
+    del stems
 
     stems_pcm = [wavfile.read(os.path.join(stem_dir, 'pattern_%d.wav' % (i + 1)))[1]
                  for i in range(len(pats))]
-    summed = np.sum([s.astype(np.int32) for s in stems_pcm], axis=0)
+    summed = np.zeros(song, dtype=np.int32)
+    for s in stems_pcm:
+        summed += s
     wavfile.write(master_path, sr, np.clip(summed, -32768, 32767).astype('<i2'))
     total, bins = write_levels(stems_pcm, stem_data)
 
@@ -167,7 +185,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bins': {str(k): v for k, v in bins.items()},
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
-        'entries': [round(t, 6) for t in start_s],
+        'anchor': round(anchors[0], 6),
+        'loops': [[round(start_s[i] + L - p['start'], 6)
+                   for L in loop_times[base]
+                   if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]
+                  for i, (base, p) in enumerate(pats)],
     }
     with open(os.path.join(stem_data, 'arr.js'), 'w') as f:
         f.write('window.ARR_META = ' + json.dumps(arr_meta, separators=(',', ':')) + ';\n')
@@ -182,7 +204,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             json.dumps(p.get('color', '#4dabf7')))
         for i, (base, p) in enumerate(pats))
     summary = ('%d patterns from %d palette%s (%d:%04.1f), %d Hz mono. Each pattern plays its whole '
-               'region once from its pass lead-in; the %d stems sum to the master.'
+               'region once from its pass anchor; the %d stems sum to the master.'
                % (len(pats), len(metas), '' if len(metas) == 1 else 's',
                   int(dur // 60), dur % 60, sr, len(pats)))
     html_text = page_html('Song &mdash; ' + os.path.splitext(master_name)[0], summary, defs,
@@ -205,7 +227,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
                 f.write(text)
 
     song_pcm = wavfile.read(master_path)[1].astype(np.int32)
-    delta = int(np.abs(np.sum([s.astype(np.int32) for s in stems_pcm], axis=0) - song_pcm).max())
+    delta = int(np.abs(summed - song_pcm).max())
     if delta > 2:
         raise RuntimeError('stem sum differs from master by %d LSB' % delta)
 
@@ -214,6 +236,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'stems': [os.path.join(stem_dir, n + '.wav') for n in names],
         'page': os.path.join(report_dir, 'song.html'),
         'bars': arr_meta['bars'], 'bar': round(bar_of[0], 4), 'duration': round(dur, 3),
+        'anchor': arr_meta['anchor'],
         'peak_db': round(20 * np.log10(np.abs(song_pcm).max() / 32768.0), 2),
         'rms_db': round(rms_db(song_pcm / 32768.0), 1),
         'clipped': int(np.sum(np.abs(song_pcm) >= 32767)),
@@ -242,6 +265,7 @@ def main():
           % (res['duration'], res['bars'], res['peak_db'], res['rms_db'], res['clipped']))
     print('stems  %d  sum delta %d LSB  gains %s'
           % (len(res['stems']), res['stem_delta_lsb'], res['gains_db']))
+    print('anchor %.3f s' % res['anchor'])
     print('entries %s' % (', '.join('%.3f' % s for s in res['entries'])))
     print('page   %s' % res['page'])
 
@@ -256,7 +280,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <style>
   :root { --bg:#121216; --card:#1a1a22; --border:#2a2a36; --text:#e1e1e6; --muted:#a0a0b0; --accent:#2196f3; }
   * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
-  body { background:var(--bg); color:var(--text); padding:24px; line-height:1.5; max-width:1000px; }
+  body { background:var(--bg); color:var(--text); padding:24px; line-height:1.5; }
   h1 { font-size:1.5rem; color:#fff; margin-bottom:6px; }
   h2 { font-size:1.05rem; color:#fff; margin:22px 0 10px; }
   p, .hint { color:var(--muted); font-size:0.88rem; }
@@ -273,7 +297,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .status { min-height:1.2em; font-size:0.8rem; color:var(--muted); margin-top:6px; }
   .dot { width:10px; height:10px; border-radius:50%; background:var(--c); flex:none; }
   .sname { font-weight:600; color:#fff; font-size:0.92rem; min-width:78px; }
-  .smeta { color:var(--muted); font-size:0.78rem; font-family:monospace; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .smeta { color:var(--muted); font-size:0.78rem; font-family:monospace; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .mute { min-width:74px; padding:4px 12px; font-size:0.82rem; }
   .mute[aria-pressed="true"] { border-color:#ff6b6b; color:#ff6b6b; }
   a.back { display:inline-block; margin-top:20px; color:var(--accent); text-decoration:none; font-size:0.88rem; }
@@ -281,10 +305,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .viewinfo { font-family:monospace; font-size:0.72rem; color:#4caf50; margin-left:auto; }
   .arow { border-top:1px solid var(--border); padding:8px 0 6px; }
   .arow:first-child { border-top:0; padding-top:0; }
-  .ahead { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-  .ahead .mute { margin-left:auto; }
+  .aoverlay { position:absolute; top:6px; left:8px; right:8px; display:flex; align-items:center; gap:10px; pointer-events:none; z-index:1; }
+  .aoverlay .mute { margin-left:auto; pointer-events:auto; background:rgba(13,13,17,0.78); }
+  .aoverlay .sname, .aoverlay .smeta { text-shadow:0 1px 3px #000; }
+  .aoverlay .smeta { background:rgba(13,13,17,0.55); padding:0 4px; border-radius:3px; }
   .awrap { position:relative; }
-  .awave { width:100%; height:40px; display:block; background:#0d0d11; border:1px solid #22222e; border-radius:5px; cursor:crosshair; }
+  .awave { width:100%; height:80px; display:block; background:#0d0d11; border:1px solid #22222e; border-radius:5px; cursor:crosshair; }
   .aaxis { width:100%; height:20px; display:block; margin-top:2px; }
   .arr-ph { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#ff5252; box-shadow:0 0 4px rgba(255,82,82,0.8); pointer-events:none; display:none; z-index:2; }
 </style>
@@ -312,7 +338,7 @@ __HEAD__
   </div>
   <div id="stems"></div>
   <canvas id="axis" class="aaxis"></canvas>
-  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play.</div>
+  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play. Gray lines mark the pass loop points inside each stem; the white line marks the shared song anchor.</div>
 </div>
 <a class="back" href="index.html">&larr; Back to reports</a>
 <script src="%5Bstems%5D/%5Bdata%5D/arr.js"></script>
@@ -352,8 +378,11 @@ const aRows = [];
 DEFS.forEach((d, i) => {
   const row = document.createElement('div');
   row.className = 'arow';
-  row.innerHTML = `<div class="ahead"><span class="dot" style="--c:${d.color}"></span><span class="sname">${d.name}</span><span class="smeta">${d.meta}</span><button class="mute" aria-pressed="false">Mute</button></div>`
-    + `<div class="awrap"><canvas class="awave"></canvas><div class="arr-ph"></div></div>`;
+  row.innerHTML = `<div class="awrap"><canvas class="awave"></canvas>`
+    + `<div class="aoverlay"><span class="dot" style="--c:${d.color}"></span>`
+    + `<span class="sname">${d.name}</span><span class="smeta">${d.meta}</span>`
+    + `<button class="mute" aria-pressed="false">Mute</button></div>`
+    + `<div class="arr-ph"></div></div>`;
   const btn = row.querySelector('button');
   btn.addEventListener('click', () => {
     muted[i] = !muted[i];
@@ -517,7 +546,6 @@ function aDraw() {
   const ok = AM.steps.filter(s => aData[s]);
   const fit = ok.filter(s => s <= spp);
   const step = ok.length ? (fit.length ? Math.max.apply(null, fit) : Math.min.apply(null, ok)) : null;
-  const barPx = AM.bar / (aEnd - aStart) * W;
   const dpr = window.devicePixelRatio || 1;
   aRows.forEach((row, i) => {
     const c = row.canvas, ctx = c.getContext('2d');
@@ -528,17 +556,12 @@ function aDraw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0d0d11';
     ctx.fillRect(0, 0, W, H);
-    for (const t of AM.entries) {
+    ctx.strokeStyle = 'rgba(160,166,184,0.40)';
+    ctx.lineWidth = 1;
+    for (const t of (AM.loops[i] || [])) {
       const x = aX(t, W);
-      ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    if (barPx >= 9) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-      for (let b = 0; b <= AM.bars; b++) {
-        const x = aX(b * AM.bar, W);
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
+      if (x < 0 || x > W) continue;
+      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
     }
     const mid = H / 2, half = H * 0.38;
     ctx.strokeStyle = 'rgba(255,255,255,0.10)';
@@ -558,6 +581,14 @@ function aDraw() {
         if (mx < mn) continue;
         const y1 = mid - mx / 32768 * half, y2 = mid - mn / 32768 * half;
         ctx.fillRect(px, y1, 1, Math.max(1, y2 - y1));
+      }
+    }
+    if (AM.anchor != null) {
+      const x = aX(AM.anchor, W);
+      if (x >= 0 && x <= W) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
       }
     }
     if (aDrag) {
