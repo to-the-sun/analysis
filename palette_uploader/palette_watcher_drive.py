@@ -62,10 +62,10 @@ def modified(entry):
 
 def pair_dirs():
     # Projects sit directly below PROJECTS; palette batches are also collected
-    # into [stems] folders at any depth inside a project.
+    # into [palettes] folders at any depth inside a project.
     found = {entry for entry in PROJECTS.iterdir() if entry.is_dir()}
     for root, dirs, _ in os.walk(PROJECTS):
-        found |= {Path(root, name) for name in dirs if name.lower() == "[stems]"}
+        found |= {Path(root, name) for name in dirs if name.lower() == "[palettes]"}
     return sorted(found)
 
 
