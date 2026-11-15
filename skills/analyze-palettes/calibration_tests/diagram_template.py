@@ -34,7 +34,8 @@ ROWS = {
     ],
 }
 
-# bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from
+# bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
+# or "center" to grow both ways from the band's midline
 WAVES = {
     "test_phrase_1": [
         (232, 533, 0.543, 1.135, "bottom"),
@@ -42,7 +43,7 @@ WAVES = {
         (837, 1137, 0.001, 0.695, "top"),
         (1139, 1439, 0.514, 1.143, "top"),
     ],
-    "test_phrase_2": [(232, 1439, 0.12, 0.52, "bottom")],
+    "test_phrase_2": [(232, 1439, 0.12, 0.52, "center")],
 }
 
 TRACE = {"test_phrase_1": "peak", "test_phrase_2": "rms"}
@@ -83,6 +84,11 @@ def main(name):
 
     for top, bottom, lo, hi, anchor in WAVES[name]:
         level = np.clip((env - lo) / (hi - lo), 0, 1) * (bottom - top) / (BOTTOM - TOP)
+        if anchor == "center":
+            mid = (y(top) + y(bottom)) / 2
+            ax.fill_between(edges[:-1], mid - level / 2, mid + level / 2,
+                            step="post", color=WAVE, lw=0, zorder=0)
+            continue
         base = y(bottom) if anchor == "bottom" else y(top)
         ax.fill_between(edges[:-1], base, base + level if anchor == "bottom" else base - level,
                         step="post", color=WAVE, lw=0, zorder=0)
