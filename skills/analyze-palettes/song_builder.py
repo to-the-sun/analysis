@@ -110,6 +110,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
+    loop_times = {}
+    for base, m in metas:
+        pl = m.get('passes')
+        loop_times[base] = ([float(q['loop']) for q in pl] if pl is not None
+                            else sorted({float(q['passStart']) for q in m['patterns']}))
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
     region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
@@ -167,7 +172,10 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bins': {str(k): v for k, v in bins.items()},
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
-        'entries': [round(t, 6) for t in start_s],
+        'loops': [[round(p['entry'] + L - p['start'], 6)
+                   for L in loop_times[base]
+                   if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]
+                  for base, p in pats],
     }
     with open(os.path.join(stem_data, 'arr.js'), 'w') as f:
         f.write('window.ARR_META = ' + json.dumps(arr_meta, separators=(',', ':')) + ';\n')
@@ -256,7 +264,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <style>
   :root { --bg:#121216; --card:#1a1a22; --border:#2a2a36; --text:#e1e1e6; --muted:#a0a0b0; --accent:#2196f3; }
   * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
-  body { background:var(--bg); color:var(--text); padding:24px; line-height:1.5; max-width:1000px; }
+  body { background:var(--bg); color:var(--text); padding:24px; line-height:1.5; }
   h1 { font-size:1.5rem; color:#fff; margin-bottom:6px; }
   h2 { font-size:1.05rem; color:#fff; margin:22px 0 10px; }
   p, .hint { color:var(--muted); font-size:0.88rem; }
@@ -273,7 +281,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .status { min-height:1.2em; font-size:0.8rem; color:var(--muted); margin-top:6px; }
   .dot { width:10px; height:10px; border-radius:50%; background:var(--c); flex:none; }
   .sname { font-weight:600; color:#fff; font-size:0.92rem; min-width:78px; }
-  .smeta { color:var(--muted); font-size:0.78rem; font-family:monospace; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .smeta { color:var(--muted); font-size:0.78rem; font-family:monospace; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .mute { min-width:74px; padding:4px 12px; font-size:0.82rem; }
   .mute[aria-pressed="true"] { border-color:#ff6b6b; color:#ff6b6b; }
   a.back { display:inline-block; margin-top:20px; color:var(--accent); text-decoration:none; font-size:0.88rem; }
@@ -281,10 +289,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .viewinfo { font-family:monospace; font-size:0.72rem; color:#4caf50; margin-left:auto; }
   .arow { border-top:1px solid var(--border); padding:8px 0 6px; }
   .arow:first-child { border-top:0; padding-top:0; }
-  .ahead { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-  .ahead .mute { margin-left:auto; }
+  .aoverlay { position:absolute; top:6px; left:8px; right:8px; display:flex; align-items:center; gap:10px; pointer-events:none; z-index:1; }
+  .aoverlay .mute { margin-left:auto; pointer-events:auto; background:rgba(13,13,17,0.78); }
+  .aoverlay .sname, .aoverlay .smeta { text-shadow:0 1px 3px #000; }
+  .aoverlay .smeta { background:rgba(13,13,17,0.55); padding:0 4px; border-radius:3px; }
   .awrap { position:relative; }
-  .awave { width:100%; height:40px; display:block; background:#0d0d11; border:1px solid #22222e; border-radius:5px; cursor:crosshair; }
+  .awave { width:100%; height:80px; display:block; background:#0d0d11; border:1px solid #22222e; border-radius:5px; cursor:crosshair; }
   .aaxis { width:100%; height:20px; display:block; margin-top:2px; }
   .arr-ph { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#ff5252; box-shadow:0 0 4px rgba(255,82,82,0.8); pointer-events:none; display:none; z-index:2; }
 </style>
@@ -312,7 +322,7 @@ __HEAD__
   </div>
   <div id="stems"></div>
   <canvas id="axis" class="aaxis"></canvas>
-  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play.</div>
+  <div class="hint">Drag horizontally on a stem to zoom. Right-click to zoom out. Click to jump and play. Gray lines mark the pass loop points inside each stem.</div>
 </div>
 <a class="back" href="index.html">&larr; Back to reports</a>
 <script src="%5Bstems%5D/%5Bdata%5D/arr.js"></script>
@@ -352,8 +362,11 @@ const aRows = [];
 DEFS.forEach((d, i) => {
   const row = document.createElement('div');
   row.className = 'arow';
-  row.innerHTML = `<div class="ahead"><span class="dot" style="--c:${d.color}"></span><span class="sname">${d.name}</span><span class="smeta">${d.meta}</span><button class="mute" aria-pressed="false">Mute</button></div>`
-    + `<div class="awrap"><canvas class="awave"></canvas><div class="arr-ph"></div></div>`;
+  row.innerHTML = `<div class="awrap"><canvas class="awave"></canvas>`
+    + `<div class="aoverlay"><span class="dot" style="--c:${d.color}"></span>`
+    + `<span class="sname">${d.name}</span><span class="smeta">${d.meta}</span>`
+    + `<button class="mute" aria-pressed="false">Mute</button></div>`
+    + `<div class="arr-ph"></div></div>`;
   const btn = row.querySelector('button');
   btn.addEventListener('click', () => {
     muted[i] = !muted[i];
@@ -517,7 +530,6 @@ function aDraw() {
   const ok = AM.steps.filter(s => aData[s]);
   const fit = ok.filter(s => s <= spp);
   const step = ok.length ? (fit.length ? Math.max.apply(null, fit) : Math.min.apply(null, ok)) : null;
-  const barPx = AM.bar / (aEnd - aStart) * W;
   const dpr = window.devicePixelRatio || 1;
   aRows.forEach((row, i) => {
     const c = row.canvas, ctx = c.getContext('2d');
@@ -528,17 +540,12 @@ function aDraw() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0d0d11';
     ctx.fillRect(0, 0, W, H);
-    for (const t of AM.entries) {
+    ctx.strokeStyle = 'rgba(160,166,184,0.40)';
+    ctx.lineWidth = 1;
+    for (const t of (AM.loops[i] || [])) {
       const x = aX(t, W);
-      ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    if (barPx >= 9) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-      for (let b = 0; b <= AM.bars; b++) {
-        const x = aX(b * AM.bar, W);
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
+      if (x < 0 || x > W) continue;
+      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
     }
     const mid = H / 2, half = H * 0.38;
     ctx.strokeStyle = 'rgba(255,255,255,0.10)';

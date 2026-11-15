@@ -369,7 +369,8 @@ Guarantees:
 
 The page plays the master or all stems in sync, seeks, mutes individual stems,
 and draws one arrangement row per stem. Drag horizontally on a row to zoom,
-right-click to zoom out, Reset Zoom to return, and click to jump and play.
+right-click to zoom out, Reset Zoom to return, and click to jump and play. Gray
+vertical guides on each row mark that stem's pass loop points.
 
 Song-level checks:
 
@@ -406,6 +407,9 @@ with only `summary.js`.
 The report must provide:
 
 - full-file waveform and a colored band for each pattern;
+- pass loop points from the passes file drawn as dashed gray guides with
+  `P<index>` labels on the waveform, and as dashed guides inside the pattern
+  rows;
 - a row per pattern with one numbered cell per full segment;
 - clickable segment chips that jump to the segment start and play;
 - drag horizontally to zoom into a time range;
