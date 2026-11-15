@@ -49,15 +49,18 @@ across patterns or across the file. Measure each region on its own terms.
 
 ## 0. Inputs and preparation
 
-1. Download the archives from the Google Drive folder
-   (`https://drive.google.com/drive/folders/1phwFvw-8xwgtFxkU1dEszvyo-UgXQhGv`),
-   extract them into `artifacts/<batch>/source/` and list the audio files. Keep
-   the palette and its passes file together, and remember which archive they came
-   from: that archive names the song master. `[2026-11-12-19-7-9].zip` yields the
-   master `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py
-   --archive`; `finished_song.wav` is only the fallback for audio that did not
-   arrive in an archive. An archive may hold several palettes; they stay in one
-   batch and feed one song.
+1. List only the direct, non-trashed children of My Drive/[palettes]
+   (`https://drive.google.com/drive/folders/1phwFvw-8xwgtFxkU1dEszvyo-UgXQhGv`).
+   Query with `trashed = false`; never process trash, shortcuts, other folders,
+   or duplicate copies. Each zip archive in that folder is a separate batch and
+   song: give it its own report folder, master and song. Extract one archive into
+   `artifacts/<archive-stem>/source/` and list its audio files. Keep the palette
+   and its passes file together, and remember which archive they came from: that
+   archive names the song master. `[2026-11-12-19-7-9].zip` yields the master
+   `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py --archive`;
+   `finished_song.wav` is only the fallback for audio that did not arrive in an
+   archive. An archive may hold several palettes; they stay in that archive's
+   batch and feed its one song.
 2. Remove the archive from the Google Drive folder once it is extracted. Palettes
    come from that folder and are kept there, so deleting the processed
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
@@ -307,7 +310,11 @@ fill more time.
 
 One song is built per archive, never per palette. If the archive holds several
 palettes, every pattern of every palette becomes a stem in the same master; do
-not build a separate song for each palette and do not leave one out.
+not build a separate song for each palette and do not leave one out. If the
+folder holds several archives, they are separate batches and separate songs;
+never combine patterns from different archives. An archive with no qualifying
+pattern still gets its own report (`patterns: []`), but has no song page or
+master.
 
 The passes file decides where each pattern begins relative to the common song
 anchor. `summary.js` stores each report's local shifted lead as `entry`, but
@@ -506,8 +513,9 @@ The archive root holds the master WAV beside the `pattern_reports/` folder.
 Include the index, all HTML reports, the `[palettes]/` WAVs and passes `.txt`
 copies, the `[data]/` chunks, and when a song was built, `song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
-they share the folder and the one master. Do not include the zip inside itself.
-Report the final size and entry count.
+they share the folder and the one master. Package each archive's batch
+separately when the folder held more than one archive. Do not include the zip
+inside itself. Report the final size and entry count.
 
 ## 8. Worked example
 
@@ -538,6 +546,10 @@ its region.
 
 - An archive with several palettes still makes one song. Do not build a song
   per palette, and do not keep one palette and discard the rest.
+- Multiple zip archives in My Drive/[palettes] are separate batches and songs.
+  Do not combine their reports or stems. A zero-pattern archive has no song page.
+- Only direct, non-trashed children of My Drive/[palettes] are inputs. Never
+  process trash, shortcuts, other folders, or duplicate copies.
 - Passes place patterns; they do not define them. Do not force a pattern start
   onto a pass loop point. Doing so makes every lead-in zero and destroys the
   measured placement.
