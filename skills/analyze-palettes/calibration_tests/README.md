@@ -71,48 +71,56 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | D chord | 1.34 | 4, 3, 3 | 0.73–6.09, 11.54–15.56, 22.14–26.16 |
 | E chord | 1.34 | 4, 3, 3 | 6.13–11.49, 16.86–20.88, 27.82–31.84 |
 | D chord | 1.58 | 3 | 33.11–37.85 |
-| pad gate | 0.67 | 31 | 0.73–21.35 |
+| pad gate | 1.34 | 3, 3, 3, 3 | 1.40–5.42, 6.80–10.82, 12.21–16.23, 17.53–21.55 |
 
 ## Discussion
 
-1. **A tracked element can be a pitch rather than an instrument.** This palette is
-one gated pad, struck the same way throughout, so timbre cannot separate its
-patterns. The pitch does: the D chord is built on 293 Hz with partials at 583,
-883 and 1174 Hz plus a 183 Hz F# line, and the E chord on 330 Hz with partials
-at 657, 990 and 1313 Hz. Same gesture, different content in the segment,
-therefore two elements and two patterns. This is the rule from test_phrase_1
-that a distinct element deserves a distinct pattern even when another shares its
-region exactly.
-2. **The accent fixes the loop and the gate does not.** The pad is re-struck every
-0.67 s, but the strikes alternate by roughly 5 dB: one is the accent and the
-next is its release. Tracking the accented strike puts the loop at 1.34 s, so a
-segment holds an accent and the release that follows it. The fourth row tracks
-the bare strike instead and folds at 0.67 s. That is the nested-period case: the
-surface pulse repeats at half the loop, and the loop is what carries the accent.
-Taking 0.67 s everywhere would describe the texture but lose the pattern the
-listener hears.
-3. **A single element can have non-contiguous patterns.** The chords alternate
+1. **A tracked element can be a pitch rather than an instrument.** This palette
+is built from sustained synth voices rather than drums, so timbre cannot
+separate its chord patterns. The pitch does: the D chord is built on 293 Hz with
+partials at 583, 883 and 1174 Hz, and the E chord on 330 Hz with partials at
+657, 990 and 1313 Hz. Same gesture, different content in the segment, therefore
+two elements and two patterns. This is the rule from test_phrase_1 that a
+distinct element deserves a distinct pattern even when another shares its region
+exactly.
+2. **The off-beat strike is a second voice, not a softer chord.** Every chord
+strike is followed about two thirds of a second later by another strike.
+Measured 60–170 ms after each, the chord's upper partials sit 24 dB above the
+F#3 line (183, 366 and 549 Hz) on the accent, while on the off-beat the F#3 line
+sits 6 dB above them. The F#3 envelope and the chord-upper envelope correlate
+−0.25 to −0.57 at zero lag across the four middle sections and turn positive
+only at a lag of ±0.6–0.8 s, half a loop either way: two voices in anti-phase,
+not one voice at two levels. The pad is the F#3 one, and it is the third tracked
+element.
+3. **That voice runs on the same segment, half a segment late.** Its strikes sit
+0.6–0.8 s from the chord's, either side of the half-way point of 1.34 s, so the
+pad takes the chord's grid rather than a loop of its own: 1.40, 6.80, 12.21 and
+17.53 are 0.73, 6.13, 11.54 and 16.86 shifted by half a segment. Sharing the
+loop is what makes the two rows nest instead of sliding: every pad box opens one
+segment into its chord box and closes one segment before that box ends. This is
+the case where imposing one grid across patterns is correct, because the audio
+puts both voices on the same pulse.
+4. **A single element can have non-contiguous patterns.** The chords alternate
 every eight strikes, four loops or about 5.3 s: D, E, D, E, D, E, D. Neither
 chord's pattern is contiguous, because each is interrupted by the other chord,
 and every interruption starts a new span exactly as the breaks in the syncopated
-kick row do.
-4. **A pattern has one loop length, so a slower section is a new pattern.** The
+kick row do. The pad is cut the same way, once per chord span.
+5. **A pattern has one loop length, so a slower section is a new pattern.** The
 last D chord is gated more slowly: its accent loop measures 1.58 s where every
 earlier chord measures 1.34 s, and its strikes land at 33.11, 34.69, 36.27 and
-37.85. It is listed as a separate pattern rather than stretched across the
-earlier grid.
-5. **Starts are measured, not shared.** The seven spans begin at 0.73, 6.13, 11.54,
-16.86, 22.14, 27.82 and 33.11 s, each the first accented strike of its chord.
-Nothing is snapped to a common grid or to the 0.67 s gate, and the sliver left
-at each chord change, 0.04 s at the first two changes and 1.3–1.7 s at the rest,
-sits outside every region.
-6. **Each pattern has its own uniform grid.** The gate divides at 0.665 s, the
-chord accents at 1.34 s, and the closing D chord at 1.58 s. No grid is imposed
-across patterns. The performance breathes, its strikes landing between 0.62 and
-0.72 s apart, so each grid is the measured mean of its span and the dashes are
-that uniform idealisation, not the performed positions.
-7. **The cycle count is an integer and the remainder is dropped.** 4 × 1.34 = 5.36
-s (0.73–6.09), 31 × 0.665 = 20.615 s (0.73–21.35) and 3 × 1.58 = 4.74 s
-(33.11–37.85). The recording is 38.9 s, so the 1.07 s tail after 37.85 and every
-partial loop at a chord change sit outside the regions: a pattern ends at its
-last complete segment.
+37.85. The voices also stop trading there, correlating +0.43 at zero lag, so the
+pad's pattern is not claimed past 21.55 s and the closing section stays a single
+pattern.
+6. **Starts are measured, and a shared loop keeps them related.** The seven
+chord spans begin at 0.73, 6.13, 11.54, 16.86, 22.14, 27.82 and 33.11 s, each
+the first accented strike of its chord. The pad's four spans begin half a loop
+later, and its own attacks land there: 1.47, 6.92, 12.13 and 17.53 s against the
+1.40, 6.80, 12.21 and 17.53 s grid. Nothing is snapped to a common grid for its
+own sake; the offset is the measured phase between the two voices.
+7. **The cycle count is an integer and the remainder is dropped.** 4 × 1.34 =
+5.36 s (0.73–6.09), 3 × 1.34 = 4.02 s (1.40–5.42) and 3 × 1.58 = 4.74 s
+(33.11–37.85). The recording is 38.9 s, so the 1.07 s tail after 37.85 and the
+sliver left at each chord change sit outside the regions: a pattern ends at its
+last complete segment. The pad gets three segments where its chord gets four,
+because starting half a segment late leaves no room for a fourth before the next
+chord.
