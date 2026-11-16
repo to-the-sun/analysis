@@ -129,10 +129,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
              for base, p in pats]
     shift = -min(leads)
     start_s = [max(0.0, lead + shift) for lead in leads]
-    anchors = [entry + pass_loops[base][p['pass']] - p['start']
-               for entry, (base, p) in zip(start_s, pats)]
-    if max(anchors) - min(anchors) > 1e-6:
-        raise ValueError('pattern loop anchors do not align')
 
     targets = cfg.get('targets') or [-20.0] * len(pats)
     if len(targets) != len(pats):
@@ -193,7 +189,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bins': {str(k): v for k, v in bins.items()},
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
-        'anchor': round(anchors[0], 6),
+        'anchor': round(shift, 6),
         'loops': [[round(start_s[i] + L - p['start'], 6)
                    for L in loop_times[base]
                    if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]

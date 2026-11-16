@@ -476,9 +476,9 @@ Builder-level:
       count match the spec.
 - [ ] Every pattern has `pass`, `passStart`, `passLead` and `entry`; `entry` is
       the raw lead shifted by that report's minimum lead.
-- [ ] When a song is built, `arr.js` has one `anchor`; every pattern's global
-      entry (`start - passStart + anchor`) puts its loop point at `anchor`
-      within 0.001 s.
+- [ ] When a song is built, `arr.js` has one `anchor`, equal to the global
+      shift; every entry is `start - passStart + pad + anchor`, so pads move a
+      stem without moving the anchor.
 - [ ] Every report row shows its assigned pass anchor in white; every song stem
       row shows the shared anchor in white and the other pass loops in gray.
 - [ ] Every pattern's segments are exactly `length` long; no partial tail
