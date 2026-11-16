@@ -281,10 +281,10 @@ back to back, and a passes file whose loop points are the seams between those
 stems, the first at 0.0. Each stem's silent `entry` padding goes into that pass's
 pad instead of the samples, so reading the pad places the stem without the file
 growing by the padding. The stems carry no gain or edge ramps, so each is its
-pattern's raw region once. A 0.6 s silent buffer follows each stem and belongs
-to no stem: it is the shortest gap the analyzer's 0.5 s / 0.1 s silence grid
-reliably splits on, so re-analyzing the compact palette finds the patterns
-again instead of one long region. The builder also writes the source's mono PCM to
+pattern's raw region once. A one-second silent buffer follows each stem and
+belongs to no stem: it clears the analyzer's 0.5 s / 0.1 s silence grid with
+room to spare, so re-analyzing the compact palette finds the patterns again
+instead of one long region. The builder also writes the source's mono PCM to
 `[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
 uses, so a report still plays from the packaged zip without the extracted
 source. Beside the copy it writes the original passes file, as
@@ -502,8 +502,8 @@ Builder-level:
       `<passes-basename>.txt` beside it.
 - [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
       a passes file giving their seams as loop points, 0.0 first, with each
-      stem's entry as its pad, and each stem is followed by the 0.6 s silent
-      buffer that keeps a re-analysis sectioned.
+      stem's entry as its pad, and each stem is followed by the one-second
+      silent buffer that keeps a re-analysis sectioned.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean

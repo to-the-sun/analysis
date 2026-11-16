@@ -10,9 +10,9 @@ CHUNK_BINS = 65536
 COARSE_STEP = 4096
 DATA_DIR, DATA_URL = '[data]', '%5Bdata%5D'
 PALETTE_DIR = '[palettes]'
-# The analyzer splits sections on 0.5 s of silence measured in 0.1 s windows; 0.6 s
-# survives that grid whatever the stem's sample offset, and nothing longer is needed.
-PATTERN_GAP_S = 0.6
+# The analyzer splits sections on 0.5 s of silence measured in 0.1 s windows; a full
+# second clears that grid at any stem offset with room to spare.
+PATTERN_GAP_S = 1.0
 LEVELS = [(8, True), (64, True), (512, True)]
 COLORS = ['#4dabf7', '#ffa94d', '#51cf66', '#cc5de8']
 
