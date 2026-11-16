@@ -533,6 +533,20 @@ they share the folder and the one master. Package each archive's batch
 separately when the folder held more than one archive. Do not include the zip
 inside itself. Report the final size and entry count.
 
+### 7a. Upload it
+
+```bash
+python3 drive_upload.py analyze-palettes.zip --name '<archive-stem>-analyze-palettes.zip'
+```
+
+It refreshes an access token, finds the `[processed]` folder beside `[palettes]`
+(creating it when missing), uploads the zip as a resumable upload and prints the
+file link. Credentials are read from `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN` in the environment; keep them
+out of the repo, the spec and any command line. With the three variables absent
+it prints `UPLOAD SKIPPED` and the batch still counts as packaged. Never upload
+into `[palettes]`: step 0 treats every zip there as a new batch.
+
 ## 8. Worked example
 
 **`palette_2026-11-10-18-16-29.wav`**, 609.10 s mono 44.1 kHz, with 29 passes.
