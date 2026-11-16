@@ -66,9 +66,8 @@ across patterns or across the file. Measure each region on its own terms.
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
    Deleting the Drive copy destroys the only stored copy of the source audio,
    and that is intended. The extracted palette and passes stay in the batch
-   folder, and the packaged `analyze-palettes.zip` keeps a copy of every source
-   WAV and its passes text file under `pattern_reports/[palettes]/`, so the
-   audio and its passes survive in the deliverables.
+   folder and the reports play the mono copy kept in `[data]/`; `[palettes]/`
+   receives a palette generated from the stems (section 2).
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
@@ -90,7 +89,9 @@ across patterns or across the file. Measure each region on its own terms.
 ### 0a. The passes format
 
 One line per pass, `index, loop_point_ms pad;`. The pad is optional and is the
-arbitrary offset the C analyzer adds when placing a stem:
+arbitrary offset the C analyzer adds when placing a stem, so it is leading blank
+space rather than audio. Both the report builder and `song_builder.py` add it to
+the lead:
 
 ```text
 0, 977.324 1.;
@@ -274,8 +275,26 @@ The builder fails if the passes file is missing. It does not reject a measured
 start for being off the pass loop grid, because pattern starts are measured, not
 chosen from the passes. A palette with no region of at least three full segments
 is still a report with `patterns: []`; it shows its waveform and contributes no
-stems to the song. It copies each palette's WAV and its passes text file into
-`[palettes]/`.
+stems to the song. Into `[palettes]/` it writes a new palette rather than copying
+the source: a mono 16-bit WAV at the source rate that lays the palette's stems
+back to back, and a passes file whose loop points are the seams between those
+stems, the first at 0.0. Each stem's silent `entry` padding goes into that pass's
+pad instead of the samples, so reading the pad places the stem without the file
+growing by the padding. The stems carry no gain or edge ramps, so each is its
+pattern's raw region once. A one-second silent buffer follows each stem and
+belongs to no stem: it clears the analyzer's 0.5 s / 0.1 s silence grid with
+room to spare, so re-analyzing the compact palette finds the patterns again
+instead of one long region. Its passes file opens with `# bar <seconds>`, the
+bar the stems were cut on; a re-analysis uses that bar instead of estimating
+one from the one-pass-per-stem grid, starts a section on a pass loop within
+0.2 s of it, and lets a section shrink by 0.2 s before it loses a segment.
+That is what makes the round trip return the patterns the palette was built
+from, at the same lengths and the same entries. The builder also writes the source's mono PCM to
+`[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
+uses, so a report still plays from the packaged zip without the extracted
+source. Beside the copy it writes the original passes file, as
+`[data]/<audio-basename>/<passes-basename>.txt`, so the loop placement travels
+with the audio.
 
 Output layout:
 
@@ -287,6 +306,8 @@ artifacts/<batch>/
     [palettes]/<audio-basename>.wav
     [palettes]/<passes-basename>.txt
     [data]/<audio-basename>/
+      <audio-basename>.wav
+      <passes-basename>.txt
       summary.js
       l8_*.js
       l64_*.js
@@ -349,8 +370,11 @@ python3 song_builder.py --spec report-spec.json \
 
 `--archive` is the zip the palette and passes were extracted from. Its stem names
 the master WAV and the link in `song.html`; omitting it writes
-`finished_song.wav`. The builder reads the report's `summary.js` and copied WAV,
-so it uses exactly the patterns, pass loops and segment grid the report shows.
+`finished_song.wav`. The builder reads the report's `summary.js` and the
+`[palettes]/` WAV it describes, cutting each stem at its seam and adding the pass
+pad to its lead, so it uses exactly the patterns, pass loops and segment grid the
+report shows. Each stem's offset is its own loop point in the generated
+palette's passes file, so the silent buffer after a stem is never read.
 
 Output:
 
@@ -436,7 +460,7 @@ The report must provide:
 - right-click to zoom out one level; a Reset Zoom button;
 - click the waveform to seek and play;
 - a red playhead that follows `audio.currentTime` via `requestAnimationFrame`;
-- a native `<audio controls>` element using the copied WAV;
+- a native `<audio controls>` element using the `[data]/` copy;
 - segment grid lines thinned when spacing is under ~2.5 px;
 - an index page linking all reports.
 
@@ -468,9 +492,9 @@ Builder-level:
       count match the spec.
 - [ ] Every pattern has `pass`, `passStart`, `passLead` and `entry`; `entry` is
       the raw lead shifted by that report's minimum lead.
-- [ ] When a song is built, `arr.js` has one `anchor`; every pattern's global
-      entry (`start - passStart + anchor`) puts its loop point at `anchor`
-      within 0.001 s.
+- [ ] When a song is built, `arr.js` has one `anchor`, equal to the global
+      shift; every entry is `start - passStart + pad + anchor`, so pads move a
+      stem without moving the anchor.
 - [ ] Every report row shows its assigned pass anchor in white; every song stem
       row shows the shared anchor in white and the other pass loops in gray.
 - [ ] Every pattern's segments are exactly `length` long; no partial tail
@@ -478,8 +502,13 @@ Builder-level:
 - [ ] Coarse min/max matches the WAV at sampled bins (the builder asserts a
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
-- [ ] Each palette's passes text file is copied into `[palettes]/` beside its
-      WAV.
+- [ ] `[data]/<audio-basename>/<audio-basename>.wav` exists and every report's
+      player resolves to it inside the packaged folder, with the original
+      `<passes-basename>.txt` beside it.
+- [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
+      a passes file giving their seams as loop points, 0.0 first, with each
+      stem's entry as its pad, and each stem is followed by the one-second
+      silent buffer that keeps a re-analysis sectioned.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
@@ -510,12 +539,27 @@ unzip -t analyze-palettes.zip
 ```
 
 The archive root holds the master WAV beside the `pattern_reports/` folder.
-Include the index, all HTML reports, the `[palettes]/` WAVs and passes `.txt`
-copies, the `[data]/` chunks, and when a song was built, `song.html` plus
+Include the index, all HTML reports, the generated `[palettes]/` WAVs and
+passes files, the `[data]/` chunks and audio copies, and when a song was built,
+`song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
 they share the folder and the one master. Package each archive's batch
 separately when the folder held more than one archive. Do not include the zip
 inside itself. Report the final size and entry count.
+
+### 7a. Upload it
+
+```bash
+python3 drive_upload.py analyze-palettes.zip --name '<archive-stem>-analyze-palettes.zip'
+```
+
+It refreshes an access token, finds the `[processed]` folder beside `[palettes]`
+(creating it when missing), uploads the zip as a resumable upload and prints the
+file link. Credentials are read from `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN` in the environment; keep them
+out of the repo, the spec and any command line. With the three variables absent
+it prints `UPLOAD SKIPPED` and the batch still counts as packaged. Never upload
+into `[palettes]`: step 0 treats every zip there as a new batch.
 
 ## 8. Worked example
 

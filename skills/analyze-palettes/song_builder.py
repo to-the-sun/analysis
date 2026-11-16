@@ -18,6 +18,8 @@ from urllib.parse import quote
 import numpy as np
 import scipy.io.wavfile as wavfile
 
+import passes
+
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
 
@@ -37,10 +39,9 @@ def read_wav(path):
     return sr, data
 
 
-def region(x, sr, pattern):
-    s0 = int(round(pattern['start'] * sr))
+def region(x, sr, pattern, offset):
     length = int(round(pattern['length'] * sr))
-    return x[s0:s0 + len(pattern['segments']) * length].astype(np.float64).copy()
+    return x[offset:offset + len(pattern['segments']) * length].astype(np.float64).copy()
 
 
 def fade_edges(reg, sr):
@@ -109,40 +110,46 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
-    loop_times, pass_loops = {}, {}
+    loop_times, pass_loops, pass_pads = {}, {}, {}
     for base, m in metas:
         pl = m.get('passes')
         if pl is not None:
             loop_times[base] = [float(q['loop']) for q in pl]
             pass_loops[base] = {q['index']: float(q['loop']) for q in pl}
+            pass_pads[base] = {q['index']: float(q['pad']) for q in pl}
         else:
             loop_times[base] = sorted({float(p['passStart']) for p in m['patterns']})
             pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
+            pass_pads[base] = {}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
     region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
         raise ValueError('song.starts is not used; entries come from the passes file')
-    leads = [float(p['start']) - pass_loops[base][p['pass']] for base, p in pats]
+    leads = [float(p['start']) - pass_loops[base][p['pass']] + pass_pads[base].get(p['pass'], 0.0)
+             for base, p in pats]
     shift = -min(leads)
     start_s = [max(0.0, lead + shift) for lead in leads]
-    anchors = [entry + pass_loops[base][p['pass']] - p['start']
-               for entry, (base, p) in zip(start_s, pats)]
-    if max(anchors) - min(anchors) > 1e-6:
-        raise ValueError('pattern loop anchors do not align')
 
     targets = cfg.get('targets') or [-20.0] * len(pats)
     if len(targets) != len(pats):
         raise ValueError('song.targets must have one value per pattern')
 
-    pcm = {}
-    for base, _ in metas:
+    pcm, offsets = {}, {}
+    for base, meta in metas:
         sr2, x = read_wav(os.path.join(report_dir, '[palettes]', base + '.wav'))
         if sr2 != sr:
             raise ValueError('sample rate mismatch')
         pcm[base] = x.astype(np.float64) / 32768.0
-    regs = [fade_edges(region(pcm[base], sr, p), sr) for base, p in pats]
+        palette_wav = os.path.join(report_dir, '[palettes]', base + '.wav')
+        palette_rows = passes.parse_passes(passes.find_passes_file(palette_wav))
+        for index, p in enumerate(meta['patterns']):
+            offset = int(round(palette_rows[index]['loop'] * sr))
+            if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
+                raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
+            offsets[base, p['id']] = offset
+    regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr) for base, p in pats]
     offs = [int(round(t * sr)) for t in start_s]
     song = max(o + len(r) for o, r in zip(offs, regs))
     dur = song / sr
@@ -185,7 +192,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bins': {str(k): v for k, v in bins.items()},
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
-        'anchor': round(anchors[0], 6),
+        'anchor': round(shift, 6),
         'loops': [[round(start_s[i] + L - p['start'], 6)
                    for L in loop_times[base]
                    if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]

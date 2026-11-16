@@ -1,4 +1,6 @@
-import os, re, json, base64, shutil, argparse, html
+import os, re, json, base64, argparse, html, shutil, wave
+from urllib.parse import quote
+
 import numpy as np
 import scipy.io.wavfile as wavfile
 
@@ -7,7 +9,10 @@ import passes
 CHUNK_BINS = 65536
 COARSE_STEP = 4096
 DATA_DIR, DATA_URL = '[data]', '%5Bdata%5D'
-PALETTE_DIR, PALETTE_URL = '[palettes]', '%5Bpalettes%5D'
+PALETTE_DIR = '[palettes]'
+# The analyzer splits sections on 0.5 s of silence measured in 0.1 s windows; a full
+# second clears that grid at any stem offset with room to spare.
+PATTERN_GAP_S = 1.0
 LEVELS = [(8, True), (64, True), (512, True)]
 COLORS = ['#4dabf7', '#ffa94d', '#51cf66', '#cc5de8']
 
@@ -851,7 +856,24 @@ def to_pcm16(data):
     raise ValueError('Unsupported WAV sample dtype: %s' % data.dtype)
 
 
-def build_report(spec, out_dir, src_dir):
+def song_shift(reports, src_dir):
+    leads = []
+    for r in reports:
+        src_path = r['file'] if os.path.isabs(r['file']) else os.path.join(src_dir, r['file'])
+        try:
+            with wave.open(src_path) as h:
+                duration = h.getnframes() / h.getframerate()
+        except (wave.Error, EOFError):
+            sr, data = wavfile.read(src_path)
+            duration = len(data) / sr
+        spans = passes.pass_spans(passes.parse_passes(passes.find_passes_file(src_path)), duration)
+        for p in r.get('patterns', []):
+            span = passes.find_pass(float(p['start']), min(duration, float(p['end'])), spans)
+            leads.append(passes.lead_in(float(p['start']), span))
+    return -min(leads) if leads else 0.0
+
+
+def build_report(spec, out_dir, src_dir, shift=0.0):
     source = spec['file']
     src_path = source if os.path.isabs(source) else os.path.join(src_dir, source)
     filename = os.path.basename(source)
@@ -877,16 +899,10 @@ def build_report(spec, out_dir, src_dir):
     passes_path = passes.find_passes_file(src_path)
     spans = passes.pass_spans(passes.parse_passes(passes_path), duration)
 
-    out_wav = os.path.join(out_dir, PALETTE_DIR, filename)
-    os.makedirs(os.path.dirname(out_wav), exist_ok=True)
-    if not os.path.exists(out_wav) or os.path.getsize(out_wav) != os.path.getsize(src_path):
-        shutil.copy2(src_path, out_wav)
-    out_passes = os.path.join(out_dir, PALETTE_DIR, os.path.basename(passes_path))
-    if not os.path.exists(out_passes) or os.path.getsize(out_passes) != os.path.getsize(passes_path):
-        shutil.copy2(passes_path, out_passes)
-
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)
+    wavfile.write(os.path.join(data_dir, basename + '.wav'), sr, pcm)
+    shutil.copyfile(passes_path, os.path.join(data_dir, os.path.basename(passes_path)))
 
     patterns = []
     for i, p in enumerate(spec.get('patterns', [])):
@@ -920,10 +936,29 @@ def build_report(spec, out_dir, src_dir):
             'segments': segments,
         })
 
-    if patterns:
-        shift = -min(p['passLead'] for p in patterns)
-        for p in patterns:
-            p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
+    for p in patterns:
+        p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
+
+    palette_dir = os.path.join(out_dir, PALETTE_DIR)
+    os.makedirs(palette_dir, exist_ok=True)
+    blocks, seams, pos = [], [], 0
+    for p in patterns:
+        n = len(p['segments']) * int(round(p['length'] * sr))
+        s0 = int(round(p['start'] * sr))
+        seg = pcm[s0:s0 + n]
+        if len(seg) < n:
+            seg = np.concatenate([seg, np.zeros(n - len(seg), dtype='<i2')])
+        seams.append(pos)
+        blocks.append(seg)
+        blocks.append(np.zeros(int(round(PATTERN_GAP_S * sr)), dtype='<i2'))
+        pos += n + len(blocks[-1])
+    wavfile.write(os.path.join(palette_dir, filename), sr,
+                  np.concatenate(blocks) if blocks else np.zeros(0, dtype='<i2'))
+    with open(os.path.join(palette_dir, os.path.basename(passes_path)), 'w') as f:
+        if patterns:
+            f.write('# bar %.6f\n' % (patterns[0]['length'] / max(1, patterns[0]['bars'])))
+        f.writelines('%d, %.6f %.6f;\n' % (i, s * 1000.0 / sr, p['entry'] * 1000.0)
+                     for i, (s, p) in enumerate(zip(seams or [0], patterns or [{'entry': 0.0}])))
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []
@@ -962,7 +997,7 @@ def build_report(spec, out_dir, src_dir):
     html_text = (HTML_TEMPLATE
                  .replace('__TITLE__', html.escape('Pattern Analysis - ' + filename))
                  .replace('__META_LINE__', meta_line)
-                 .replace('__AUDIO_SRC__', PALETTE_URL + '/' + filename)
+                 .replace('__AUDIO_SRC__', DATA_URL + '/' + quote(basename) + '/' + quote(basename + '.wav'))
                  .replace('__PATTERN_CARDS__', pattern_cards(patterns))
                  .replace('__DATA_SCRIPT__', DATA_URL + '/' + basename + '/summary.js')
                  .replace('__REPORT_JS__', JS))
@@ -1018,6 +1053,7 @@ def main():
         else:
             raise SystemExit('Spec must contain a "reports" list or a top-level "file".')
 
+    shift = song_shift(reports, src_dir)
     results = []
     seen = set()
     for r in reports:
@@ -1027,7 +1063,7 @@ def main():
             raise SystemExit('Duplicate report basename: %s' % basename)
         seen.add(basename)
         print('Building', source)
-        results.append(build_report(r, args.out, src_dir))
+        results.append(build_report(r, args.out, src_dir, shift))
 
     cards = []
     for r in results:
