@@ -1,4 +1,4 @@
-import os, re, json, base64, argparse, html
+import os, re, json, base64, argparse, html, shutil
 from urllib.parse import quote
 
 import numpy as np
@@ -882,6 +882,7 @@ def build_report(spec, out_dir, src_dir):
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)
     wavfile.write(os.path.join(data_dir, basename + '.wav'), sr, pcm)
+    shutil.copyfile(passes_path, os.path.join(data_dir, os.path.basename(passes_path)))
 
     patterns = []
     for i, p in enumerate(spec.get('patterns', [])):

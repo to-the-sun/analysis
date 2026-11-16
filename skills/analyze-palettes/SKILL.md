@@ -284,7 +284,9 @@ growing by the padding. The stems carry no gain or edge ramps, so each is its
 pattern's raw region once. The builder also writes the source's mono PCM to
 `[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
 uses, so a report still plays from the packaged zip without the extracted
-source.
+source. Beside the copy it writes the original passes file, as
+`[data]/<audio-basename>/<passes-basename>.txt`, so the loop placement travels
+with the audio.
 
 Output layout:
 
@@ -297,6 +299,7 @@ artifacts/<batch>/
     [palettes]/<passes-basename>.txt
     [data]/<audio-basename>/
       <audio-basename>.wav
+      <passes-basename>.txt
       summary.js
       l8_*.js
       l64_*.js
@@ -491,7 +494,8 @@ Builder-level:
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
 - [ ] `[data]/<audio-basename>/<audio-basename>.wav` exists and every report's
-      player resolves to it inside the packaged folder.
+      player resolves to it inside the packaged folder, with the original
+      `<passes-basename>.txt` beside it.
 - [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
       a passes file giving their seams as loop points, 0.0 first, with each
       stem's entry as its pad.
