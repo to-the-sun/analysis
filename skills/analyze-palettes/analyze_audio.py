@@ -213,7 +213,7 @@ def suggest_loop(F, fps, section, bar, min_segments=3, slack=0.0):
     return {
         'start': round(start, 3),
         'end': round(start + segments * bars * bar, 3),
-        'bound': round(end, 3),
+        'bound': round(max(end, start + segments * bars * bar), 3),
         'length': round(bars * bar, 6), 'bars': bars, 'segments': segments,
         'meanSimilarity': round(sim, 3), 'peakMargin': round(margin, 3),
         'confidence': confidence,
