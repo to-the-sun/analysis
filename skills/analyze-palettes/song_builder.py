@@ -37,10 +37,9 @@ def read_wav(path):
     return sr, data
 
 
-def region(x, sr, pattern):
-    s0 = int(round(pattern['start'] * sr))
+def region(x, sr, pattern, offset):
     length = int(round(pattern['length'] * sr))
-    return x[s0:s0 + len(pattern['segments']) * length].astype(np.float64).copy()
+    return x[offset:offset + len(pattern['segments']) * length].astype(np.float64).copy()
 
 
 def fade_edges(reg, sr):
@@ -136,13 +135,20 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     if len(targets) != len(pats):
         raise ValueError('song.targets must have one value per pattern')
 
-    pcm = {}
-    for base, _ in metas:
+    pcm, offsets = {}, {}
+    for base, meta in metas:
         sr2, x = read_wav(os.path.join(report_dir, '[palettes]', base + '.wav'))
         if sr2 != sr:
             raise ValueError('sample rate mismatch')
         pcm[base] = x.astype(np.float64) / 32768.0
-    regs = [fade_edges(region(pcm[base], sr, p), sr) for base, p in pats]
+        pos = 0
+        for p in meta['patterns']:
+            pos += int(round(p['entry'] * sr))
+            offsets[base, p['id']] = pos
+            pos += len(p['segments']) * int(round(p['length'] * sr))
+        if pos != len(x):
+            raise ValueError('%s palette holds %d samples, its stems fill %d' % (base, len(x), pos))
+    regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr) for base, p in pats]
     offs = [int(round(t * sr)) for t in start_s]
     song = max(o + len(r) for o, r in zip(offs, regs))
     dur = song / sr

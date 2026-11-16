@@ -66,9 +66,8 @@ across patterns or across the file. Measure each region on its own terms.
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
    Deleting the Drive copy destroys the only stored copy of the source audio,
    and that is intended. The extracted palette and passes stay in the batch
-   folder, and the packaged `analyze-palettes.zip` keeps a copy of every source
-   WAV and its passes text file under `pattern_reports/[palettes]/`, so the
-   audio and its passes survive in the deliverables.
+   folder and the reports play that audio directly; `pattern_reports/[palettes]/`
+   instead receives a palette generated from the stems (section 2).
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
@@ -274,8 +273,11 @@ The builder fails if the passes file is missing. It does not reject a measured
 start for being off the pass loop grid, because pattern starts are measured, not
 chosen from the passes. A palette with no region of at least three full segments
 is still a report with `patterns: []`; it shows its waveform and contributes no
-stems to the song. It copies each palette's WAV and its passes text file into
-`[palettes]/`.
+stems to the song. Into `[palettes]/` it writes a new palette rather than copying
+the source: a mono 16-bit WAV at the source rate that lays the palette's stems end
+to end, each behind its silent `entry` padding, and a passes file whose loop
+points are the seams between those stems, the first at 0.0, with pad 0. The stems
+carry no gain or edge ramps there, so each is its pattern's raw region once.
 
 Output layout:
 
@@ -349,7 +351,8 @@ python3 song_builder.py --spec report-spec.json \
 
 `--archive` is the zip the palette and passes were extracted from. Its stem names
 the master WAV and the link in `song.html`; omitting it writes
-`finished_song.wav`. The builder reads the report's `summary.js` and copied WAV,
+`finished_song.wav`. The builder reads the report's `summary.js` and the
+`[palettes]/` WAV it describes, cutting each stem at its seam plus entry padding,
 so it uses exactly the patterns, pass loops and segment grid the report shows.
 
 Output:
@@ -436,7 +439,7 @@ The report must provide:
 - right-click to zoom out one level; a Reset Zoom button;
 - click the waveform to seek and play;
 - a red playhead that follows `audio.currentTime` via `requestAnimationFrame`;
-- a native `<audio controls>` element using the copied WAV;
+- a native `<audio controls>` element using the source WAV;
 - segment grid lines thinned when spacing is under ~2.5 px;
 - an index page linking all reports.
 
@@ -478,8 +481,8 @@ Builder-level:
 - [ ] Coarse min/max matches the WAV at sampled bins (the builder asserts a
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
-- [ ] Each palette's passes text file is copied into `[palettes]/` beside its
-      WAV.
+- [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
+      a passes file listing their seams, 0.0 first.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
@@ -510,8 +513,8 @@ unzip -t analyze-palettes.zip
 ```
 
 The archive root holds the master WAV beside the `pattern_reports/` folder.
-Include the index, all HTML reports, the `[palettes]/` WAVs and passes `.txt`
-copies, the `[data]/` chunks, and when a song was built, `song.html` plus
+Include the index, all HTML reports, the generated `[palettes]/` WAVs and
+passes files, the `[data]/` chunks, and when a song was built, `song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
 they share the folder and the one master. Package each archive's batch
 separately when the folder held more than one archive. Do not include the zip

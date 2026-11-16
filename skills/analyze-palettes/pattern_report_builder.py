@@ -1,4 +1,6 @@
-import os, re, json, base64, shutil, argparse, html
+import os, re, json, base64, argparse, html
+from urllib.parse import quote
+
 import numpy as np
 import scipy.io.wavfile as wavfile
 
@@ -7,7 +9,7 @@ import passes
 CHUNK_BINS = 65536
 COARSE_STEP = 4096
 DATA_DIR, DATA_URL = '[data]', '%5Bdata%5D'
-PALETTE_DIR, PALETTE_URL = '[palettes]', '%5Bpalettes%5D'
+PALETTE_DIR = '[palettes]'
 LEVELS = [(8, True), (64, True), (512, True)]
 COLORS = ['#4dabf7', '#ffa94d', '#51cf66', '#cc5de8']
 
@@ -877,14 +879,6 @@ def build_report(spec, out_dir, src_dir):
     passes_path = passes.find_passes_file(src_path)
     spans = passes.pass_spans(passes.parse_passes(passes_path), duration)
 
-    out_wav = os.path.join(out_dir, PALETTE_DIR, filename)
-    os.makedirs(os.path.dirname(out_wav), exist_ok=True)
-    if not os.path.exists(out_wav) or os.path.getsize(out_wav) != os.path.getsize(src_path):
-        shutil.copy2(src_path, out_wav)
-    out_passes = os.path.join(out_dir, PALETTE_DIR, os.path.basename(passes_path))
-    if not os.path.exists(out_passes) or os.path.getsize(out_passes) != os.path.getsize(passes_path):
-        shutil.copy2(passes_path, out_passes)
-
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)
 
@@ -925,6 +919,24 @@ def build_report(spec, out_dir, src_dir):
         for p in patterns:
             p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
 
+    palette_dir = os.path.join(out_dir, PALETTE_DIR)
+    os.makedirs(palette_dir, exist_ok=True)
+    blocks, seams, pos = [], [], 0
+    for p in patterns:
+        pad = int(round(p['entry'] * sr))
+        n = len(p['segments']) * int(round(p['length'] * sr))
+        s0 = int(round(p['start'] * sr))
+        seg = pcm[s0:s0 + n]
+        if len(seg) < n:
+            seg = np.concatenate([seg, np.zeros(n - len(seg), dtype='<i2')])
+        seams.append(pos)
+        blocks += [np.zeros(pad, dtype='<i2'), seg]
+        pos += pad + n
+    wavfile.write(os.path.join(palette_dir, filename), sr,
+                  np.concatenate(blocks) if blocks else np.zeros(0, dtype='<i2'))
+    with open(os.path.join(palette_dir, os.path.basename(passes_path)), 'w') as f:
+        f.writelines('%d, %.6f 0.;\n' % (i, s * 1000.0 / sr) for i, s in enumerate(seams or [0]))
+
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []
     for li, (step, minmax) in enumerate(LEVELS):
@@ -962,7 +974,7 @@ def build_report(spec, out_dir, src_dir):
     html_text = (HTML_TEMPLATE
                  .replace('__TITLE__', html.escape('Pattern Analysis - ' + filename))
                  .replace('__META_LINE__', meta_line)
-                 .replace('__AUDIO_SRC__', PALETTE_URL + '/' + filename)
+                 .replace('__AUDIO_SRC__', quote(os.path.relpath(src_path, out_dir).replace(os.sep, '/'), safe='/'))
                  .replace('__PATTERN_CARDS__', pattern_cards(patterns))
                  .replace('__DATA_SCRIPT__', DATA_URL + '/' + basename + '/summary.js')
                  .replace('__REPORT_JS__', JS))
