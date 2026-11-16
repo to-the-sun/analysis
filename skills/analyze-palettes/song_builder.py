@@ -108,22 +108,25 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
-    loop_times, pass_loops = {}, {}
+    loop_times, pass_loops, pass_pads = {}, {}, {}
     for base, m in metas:
         pl = m.get('passes')
         if pl is not None:
             loop_times[base] = [float(q['loop']) for q in pl]
             pass_loops[base] = {q['index']: float(q['loop']) for q in pl}
+            pass_pads[base] = {q['index']: float(q['pad']) for q in pl}
         else:
             loop_times[base] = sorted({float(p['passStart']) for p in m['patterns']})
             pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
+            pass_pads[base] = {}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
     region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
         raise ValueError('song.starts is not used; entries come from the passes file')
-    leads = [float(p['start']) - pass_loops[base][p['pass']] for base, p in pats]
+    leads = [float(p['start']) - pass_loops[base][p['pass']] + pass_pads[base].get(p['pass'], 0.0)
+             for base, p in pats]
     shift = -min(leads)
     start_s = [max(0.0, lead + shift) for lead in leads]
     anchors = [entry + pass_loops[base][p['pass']] - p['start']
@@ -143,7 +146,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         pcm[base] = x.astype(np.float64) / 32768.0
         pos = 0
         for p in meta['patterns']:
-            pos += int(round(p['entry'] * sr))
             offsets[base, p['id']] = pos
             pos += len(p['segments']) * int(round(p['length'] * sr))
         if pos != len(x):

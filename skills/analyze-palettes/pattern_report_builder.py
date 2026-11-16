@@ -923,19 +923,19 @@ def build_report(spec, out_dir, src_dir):
     os.makedirs(palette_dir, exist_ok=True)
     blocks, seams, pos = [], [], 0
     for p in patterns:
-        pad = int(round(p['entry'] * sr))
         n = len(p['segments']) * int(round(p['length'] * sr))
         s0 = int(round(p['start'] * sr))
         seg = pcm[s0:s0 + n]
         if len(seg) < n:
             seg = np.concatenate([seg, np.zeros(n - len(seg), dtype='<i2')])
         seams.append(pos)
-        blocks += [np.zeros(pad, dtype='<i2'), seg]
-        pos += pad + n
+        blocks.append(seg)
+        pos += n
     wavfile.write(os.path.join(palette_dir, filename), sr,
                   np.concatenate(blocks) if blocks else np.zeros(0, dtype='<i2'))
     with open(os.path.join(palette_dir, os.path.basename(passes_path)), 'w') as f:
-        f.writelines('%d, %.6f 0.;\n' % (i, s * 1000.0 / sr) for i, s in enumerate(seams or [0]))
+        f.writelines('%d, %.6f %.6f;\n' % (i, s * 1000.0 / sr, p['entry'] * 1000.0)
+                     for i, (s, p) in enumerate(zip(seams or [0], patterns or [{'entry': 0.0}])))
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []

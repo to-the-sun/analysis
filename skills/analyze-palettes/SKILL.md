@@ -89,7 +89,9 @@ across patterns or across the file. Measure each region on its own terms.
 ### 0a. The passes format
 
 One line per pass, `index, loop_point_ms pad;`. The pad is optional and is the
-arbitrary offset the C analyzer adds when placing a stem:
+arbitrary offset the C analyzer adds when placing a stem, so it is leading blank
+space rather than audio. Both the report builder and `song_builder.py` add it to
+the lead:
 
 ```text
 0, 977.324 1.;
@@ -274,10 +276,12 @@ start for being off the pass loop grid, because pattern starts are measured, not
 chosen from the passes. A palette with no region of at least three full segments
 is still a report with `patterns: []`; it shows its waveform and contributes no
 stems to the song. Into `[palettes]/` it writes a new palette rather than copying
-the source: a mono 16-bit WAV at the source rate that lays the palette's stems end
-to end, each behind its silent `entry` padding, and a passes file whose loop
-points are the seams between those stems, the first at 0.0, with pad 0. The stems
-carry no gain or edge ramps there, so each is its pattern's raw region once.
+the source: a mono 16-bit WAV at the source rate that lays the palette's stems
+back to back, and a passes file whose loop points are the seams between those
+stems, the first at 0.0. Each stem's silent `entry` padding goes into that pass's
+pad instead of the samples, so reading the pad places the stem without the file
+growing by the padding. The stems carry no gain or edge ramps, so each is its
+pattern's raw region once.
 
 Output layout:
 
@@ -352,8 +356,9 @@ python3 song_builder.py --spec report-spec.json \
 `--archive` is the zip the palette and passes were extracted from. Its stem names
 the master WAV and the link in `song.html`; omitting it writes
 `finished_song.wav`. The builder reads the report's `summary.js` and the
-`[palettes]/` WAV it describes, cutting each stem at its seam plus entry padding,
-so it uses exactly the patterns, pass loops and segment grid the report shows.
+`[palettes]/` WAV it describes, cutting each stem at its seam and adding the pass
+pad to its lead, so it uses exactly the patterns, pass loops and segment grid the
+report shows.
 
 Output:
 
@@ -482,7 +487,8 @@ Builder-level:
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
 - [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
-      a passes file listing their seams, 0.0 first.
+      a passes file giving their seams as loop points, 0.0 first, with each
+      stem's entry as its pad.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
