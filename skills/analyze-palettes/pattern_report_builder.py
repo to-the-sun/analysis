@@ -1,4 +1,4 @@
-import os, re, json, base64, argparse, html, shutil
+import os, re, json, base64, argparse, html, shutil, wave
 from urllib.parse import quote
 
 import numpy as np
@@ -856,7 +856,24 @@ def to_pcm16(data):
     raise ValueError('Unsupported WAV sample dtype: %s' % data.dtype)
 
 
-def build_report(spec, out_dir, src_dir):
+def song_shift(reports, src_dir):
+    leads = []
+    for r in reports:
+        src_path = r['file'] if os.path.isabs(r['file']) else os.path.join(src_dir, r['file'])
+        try:
+            with wave.open(src_path) as h:
+                duration = h.getnframes() / h.getframerate()
+        except (wave.Error, EOFError):
+            sr, data = wavfile.read(src_path)
+            duration = len(data) / sr
+        spans = passes.pass_spans(passes.parse_passes(passes.find_passes_file(src_path)), duration)
+        for p in r.get('patterns', []):
+            span = passes.find_pass(float(p['start']), min(duration, float(p['end'])), spans)
+            leads.append(passes.lead_in(float(p['start']), span))
+    return -min(leads) if leads else 0.0
+
+
+def build_report(spec, out_dir, src_dir, shift=0.0):
     source = spec['file']
     src_path = source if os.path.isabs(source) else os.path.join(src_dir, source)
     filename = os.path.basename(source)
@@ -919,10 +936,8 @@ def build_report(spec, out_dir, src_dir):
             'segments': segments,
         })
 
-    if patterns:
-        shift = -min(p['passLead'] for p in patterns)
-        for p in patterns:
-            p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
+    for p in patterns:
+        p['entry'] = round(max(0.0, p['passLead'] + shift), 6)
 
     palette_dir = os.path.join(out_dir, PALETTE_DIR)
     os.makedirs(palette_dir, exist_ok=True)
@@ -940,6 +955,8 @@ def build_report(spec, out_dir, src_dir):
     wavfile.write(os.path.join(palette_dir, filename), sr,
                   np.concatenate(blocks) if blocks else np.zeros(0, dtype='<i2'))
     with open(os.path.join(palette_dir, os.path.basename(passes_path)), 'w') as f:
+        if patterns:
+            f.write('# bar %.6f\n' % (patterns[0]['length'] / max(1, patterns[0]['bars'])))
         f.writelines('%d, %.6f %.6f;\n' % (i, s * 1000.0 / sr, p['entry'] * 1000.0)
                      for i, (s, p) in enumerate(zip(seams or [0], patterns or [{'entry': 0.0}])))
 
@@ -1036,6 +1053,7 @@ def main():
         else:
             raise SystemExit('Spec must contain a "reports" list or a top-level "file".')
 
+    shift = song_shift(reports, src_dir)
     results = []
     seen = set()
     for r in reports:
@@ -1045,7 +1063,7 @@ def main():
             raise SystemExit('Duplicate report basename: %s' % basename)
         seen.add(basename)
         print('Building', source)
-        results.append(build_report(r, args.out, src_dir))
+        results.append(build_report(r, args.out, src_dir, shift))
 
     cards = []
     for r in results:

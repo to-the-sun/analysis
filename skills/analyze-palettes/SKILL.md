@@ -284,7 +284,12 @@ growing by the padding. The stems carry no gain or edge ramps, so each is its
 pattern's raw region once. A one-second silent buffer follows each stem and
 belongs to no stem: it clears the analyzer's 0.5 s / 0.1 s silence grid with
 room to spare, so re-analyzing the compact palette finds the patterns again
-instead of one long region. The builder also writes the source's mono PCM to
+instead of one long region. Its passes file opens with `# bar <seconds>`, the
+bar the stems were cut on; a re-analysis uses that bar instead of estimating
+one from the one-pass-per-stem grid, starts a section on a pass loop within
+0.2 s of it, and lets a section shrink by 0.2 s before it loses a segment.
+That is what makes the round trip return the patterns the palette was built
+from, at the same lengths and the same entries. The builder also writes the source's mono PCM to
 `[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
 uses, so a report still plays from the packaged zip without the extracted
 source. Beside the copy it writes the original passes file, as

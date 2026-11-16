@@ -30,6 +30,18 @@ def find_passes_file(audio_path):
     return sorted(found, key=lambda p: (len(os.path.basename(p)), os.path.basename(p)))[0]
 
 
+def parse_bar(path):
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            text = line.strip()
+            if text.lower().startswith('# bar'):
+                try:
+                    return float(text.split()[-1])
+                except (ValueError, IndexError):
+                    return None
+    return None
+
+
 def parse_passes(path):
     rows = []
     with open(path, encoding='utf-8', errors='replace') as f:

@@ -181,10 +181,10 @@ def mean_lag_sim(F, i0, i1, lag):
     return float((F[:, i0:i1 - lag] * F[:, i0 + lag:i1]).sum(axis=0).mean())
 
 
-def suggest_loop(F, fps, section, bar, min_segments=3):
+def suggest_loop(F, fps, section, bar, min_segments=3, slack=0.0):
     start, end = section['start'], section['end']
     span = end - start
-    run_bars = int(span // bar)
+    run_bars = int((span + slack) // bar)
     if run_bars < min_segments:
         return None
     i0 = int(round(start * fps))
@@ -204,7 +204,7 @@ def suggest_loop(F, fps, section, bar, min_segments=3):
         other = mean_lag_sim(F, i0, i1, int(round((bars + off) * bar * fps)))
         if other is not None:
             ref = max(ref, other)
-    segments = int(span // (bars * bar))
+    segments = int((span + slack) // (bars * bar))
     if segments < min_segments:
         return None
     margin = sim - ref
@@ -285,10 +285,18 @@ def analyze(path, args):
 
     passes_path = passes.find_passes_file(path)
     spans = passes.pass_spans(passes.parse_passes(passes_path), dur)
-    bar = estimate_bar(spans)
+    bar_hint = passes.parse_bar(passes_path)
+    bar = bar_hint or estimate_bar(spans)
     runs = group_passes(spans)
     sections = detect_sections(x, sr, args.threshold_db,
                                args.min_silence, args.min_section)
+    if bar_hint:
+        # A generated palette puts a pass loop on every stem start; a section
+        # that begins within a window of one starts on it.
+        loops = [s['loop'] for s in spans]
+        sections = [(min(loops, key=lambda v: abs(v - s)), e)
+                    if min(abs(v - s) for v in loops) <= 0.2 else (s, e)
+                    for s, e in sections]
     result = {
         'file': os.path.basename(path),
         'passesFile': os.path.basename(passes_path),
@@ -345,7 +353,9 @@ def analyze(path, args):
             if name in cand['band_peaks']:
                 print('    %-5s:' % name, ' '.join('%.2f:%.3f' % z for z in cand['band_peaks'][name]))
     for s, e in sections:
-        sug = suggest_loop(F, fps, {'start': s, 'end': e}, bar)
+        # A generated palette declares its bar; its section edges are quantized
+        # to the 0.1 s windows, so allow two windows of shrink before losing a segment.
+        sug = suggest_loop(F, fps, {'start': s, 'end': e}, bar, slack=0.2 if bar_hint else 0.0)
         if sug:
             span = passes.find_pass(s, e, spans)
             sug['pass'] = span['index']
