@@ -140,12 +140,11 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         if sr2 != sr:
             raise ValueError('sample rate mismatch')
         pcm[base] = x.astype(np.float64) / 32768.0
-        pos = 0
         for p in meta['patterns']:
-            offsets[base, p['id']] = pos
-            pos += len(p['segments']) * int(round(p['length'] * sr))
-        if pos != len(x):
-            raise ValueError('%s palette holds %d samples, its stems fill %d' % (base, len(x), pos))
+            offset = int(round(pass_loops[base][p['pass']] * sr))
+            if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
+                raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
+            offsets[base, p['id']] = offset
     regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr) for base, p in pats]
     offs = [int(round(t * sr)) for t in start_s]
     song = max(o + len(r) for o, r in zip(offs, regs))

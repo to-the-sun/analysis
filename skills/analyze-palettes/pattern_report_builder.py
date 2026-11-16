@@ -10,6 +10,9 @@ CHUNK_BINS = 65536
 COARSE_STEP = 4096
 DATA_DIR, DATA_URL = '[data]', '%5Bdata%5D'
 PALETTE_DIR = '[palettes]'
+# The analyzer splits sections on 0.5 s of silence measured in 0.1 s windows; 0.6 s
+# survives that grid whatever the stem's sample offset, and nothing longer is needed.
+PATTERN_GAP_S = 0.6
 LEVELS = [(8, True), (64, True), (512, True)]
 COLORS = ['#4dabf7', '#ffa94d', '#51cf66', '#cc5de8']
 
@@ -932,7 +935,8 @@ def build_report(spec, out_dir, src_dir):
             seg = np.concatenate([seg, np.zeros(n - len(seg), dtype='<i2')])
         seams.append(pos)
         blocks.append(seg)
-        pos += n
+        blocks.append(np.zeros(int(round(PATTERN_GAP_S * sr)), dtype='<i2'))
+        pos += n + len(blocks[-1])
     wavfile.write(os.path.join(palette_dir, filename), sr,
                   np.concatenate(blocks) if blocks else np.zeros(0, dtype='<i2'))
     with open(os.path.join(palette_dir, os.path.basename(passes_path)), 'w') as f:
