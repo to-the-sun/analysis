@@ -18,6 +18,8 @@ from urllib.parse import quote
 import numpy as np
 import scipy.io.wavfile as wavfile
 
+import passes
+
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
 
@@ -140,8 +142,10 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         if sr2 != sr:
             raise ValueError('sample rate mismatch')
         pcm[base] = x.astype(np.float64) / 32768.0
-        for p in meta['patterns']:
-            offset = int(round(pass_loops[base][p['pass']] * sr))
+        palette_wav = os.path.join(report_dir, '[palettes]', base + '.wav')
+        palette_rows = passes.parse_passes(passes.find_passes_file(palette_wav))
+        for index, p in enumerate(meta['patterns']):
+            offset = int(round(palette_rows[index]['loop'] * sr))
             if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
                 raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
             offsets[base, p['id']] = offset

@@ -368,8 +368,8 @@ the master WAV and the link in `song.html`; omitting it writes
 `finished_song.wav`. The builder reads the report's `summary.js` and the
 `[palettes]/` WAV it describes, cutting each stem at its seam and adding the pass
 pad to its lead, so it uses exactly the patterns, pass loops and segment grid the
-report shows. Each stem's offset is its pass's loop point, so the silent buffer
-after a stem is never read.
+report shows. Each stem's offset is its own loop point in the generated
+palette's passes file, so the silent buffer after a stem is never read.
 
 Output:
 
