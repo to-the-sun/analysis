@@ -881,6 +881,7 @@ def build_report(spec, out_dir, src_dir):
 
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)
+    wavfile.write(os.path.join(data_dir, basename + '.wav'), sr, pcm)
 
     patterns = []
     for i, p in enumerate(spec.get('patterns', [])):
@@ -974,7 +975,7 @@ def build_report(spec, out_dir, src_dir):
     html_text = (HTML_TEMPLATE
                  .replace('__TITLE__', html.escape('Pattern Analysis - ' + filename))
                  .replace('__META_LINE__', meta_line)
-                 .replace('__AUDIO_SRC__', quote(os.path.relpath(src_path, out_dir).replace(os.sep, '/'), safe='/'))
+                 .replace('__AUDIO_SRC__', DATA_URL + '/' + quote(basename) + '/' + quote(basename + '.wav'))
                  .replace('__PATTERN_CARDS__', pattern_cards(patterns))
                  .replace('__DATA_SCRIPT__', DATA_URL + '/' + basename + '/summary.js')
                  .replace('__REPORT_JS__', JS))

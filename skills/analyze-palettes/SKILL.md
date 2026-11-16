@@ -66,8 +66,8 @@ across patterns or across the file. Measure each region on its own terms.
    `<stamp>.zip` is what marks the archive done. This is required, not optional.
    Deleting the Drive copy destroys the only stored copy of the source audio,
    and that is intended. The extracted palette and passes stay in the batch
-   folder and the reports play that audio directly; `pattern_reports/[palettes]/`
-   instead receives a palette generated from the stems (section 2).
+   folder and the reports play the mono copy kept in `[data]/`; `[palettes]/`
+   receives a palette generated from the stems (section 2).
 3. Probe duration, sample rate and channel count.
 4. Convert non-WAV input to mono 16-bit PCM WAV for the report builder:
 
@@ -281,7 +281,10 @@ back to back, and a passes file whose loop points are the seams between those
 stems, the first at 0.0. Each stem's silent `entry` padding goes into that pass's
 pad instead of the samples, so reading the pad places the stem without the file
 growing by the padding. The stems carry no gain or edge ramps, so each is its
-pattern's raw region once.
+pattern's raw region once. The builder also writes the source's mono PCM to
+`[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
+uses, so a report still plays from the packaged zip without the extracted
+source.
 
 Output layout:
 
@@ -293,6 +296,7 @@ artifacts/<batch>/
     [palettes]/<audio-basename>.wav
     [palettes]/<passes-basename>.txt
     [data]/<audio-basename>/
+      <audio-basename>.wav
       summary.js
       l8_*.js
       l64_*.js
@@ -444,7 +448,7 @@ The report must provide:
 - right-click to zoom out one level; a Reset Zoom button;
 - click the waveform to seek and play;
 - a red playhead that follows `audio.currentTime` via `requestAnimationFrame`;
-- a native `<audio controls>` element using the source WAV;
+- a native `<audio controls>` element using the `[data]/` copy;
 - segment grid lines thinned when spacing is under ~2.5 px;
 - an index page linking all reports.
 
@@ -486,6 +490,8 @@ Builder-level:
 - [ ] Coarse min/max matches the WAV at sampled bins (the builder asserts a
       few bins).
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
+- [ ] `[data]/<audio-basename>/<audio-basename>.wav` exists and every report's
+      player resolves to it inside the packaged folder.
 - [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
       a passes file giving their seams as loop points, 0.0 first, with each
       stem's entry as its pad.
@@ -520,7 +526,8 @@ unzip -t analyze-palettes.zip
 
 The archive root holds the master WAV beside the `pattern_reports/` folder.
 Include the index, all HTML reports, the generated `[palettes]/` WAVs and
-passes files, the `[data]/` chunks, and when a song was built, `song.html` plus
+passes files, the `[data]/` chunks and audio copies, and when a song was built,
+`song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
 they share the folder and the one master. Package each archive's batch
 separately when the folder held more than one archive. Do not include the zip
