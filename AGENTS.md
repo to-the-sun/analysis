@@ -46,7 +46,7 @@ Use markdown.
   `copy-song-builder-in-analyzer`.
 - Commit as often as the work needs, and keep committing to the same open branch
   even between merges of other pull requests. A fresh branch is required only
-  when the work is a genuinely different change, not for every commit.
+  when the work is a genuinely different change, not for every commit. Required for a new branch is that no changed file in it overlaps with any existing open branch, to avoid merge conflicts. 
 - One pull request per logical change. Keep unrelated drive-by edits out of it.
 - Do not merge, rebase, force-push, or push to `main`. The user merges the PR.
 - Test artifacts and scripts should be removed and not committed unless explicitly asked for. 
