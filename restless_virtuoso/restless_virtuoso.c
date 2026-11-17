@@ -23,6 +23,11 @@
 #include "vst_abi.h"
 #define DR_WAV_IMPLEMENTATION
 #include "../analysis/dr_wav.h"
+#define DR_FLAC_IMPLEMENTATION
+#include "dr_flac.h"
+#define DR_MP3_IMPLEMENTATION
+#include "dr_mp3.h"
+#include "stb_vorbis.c"
 
 #define MAX_SELECTED 32
 #define QUEUE_FILES 1024
@@ -431,6 +436,19 @@ static int compare_names(const void *a, const void *b)
     return _wcsicmp(*(const wchar_t *const *)a, *(const wchar_t *const *)b);
 }
 
+static const wchar_t *const audioExtensions[] = {
+    L".wav", L".wave", L".aif", L".aiff", L".flac", L".mp3", L".ogg", L".oga"
+};
+
+static int is_audio_name(const wchar_t *name)
+{
+    const wchar_t *dot = wcsrchr(name, L'.');
+    if (!dot) return 0;
+    for (size_t i = 0; i < sizeof audioExtensions / sizeof *audioExtensions; i++)
+        if (!_wcsicmp(dot, audioExtensions[i])) return 1;
+    return 0;
+}
+
 static int scan_audio_files(const wchar_t *folder)
 {
     size_t folderLength = wcslen(folder);
@@ -444,9 +462,8 @@ static int scan_audio_files(const wchar_t *folder)
     if (find == INVALID_HANDLE_VALUE) return -1;
 
     do {
-        const wchar_t *extension = wcsrchr(entry.cFileName, L'.');
-        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !extension) continue;
-        if (_wcsicmp(extension, L".wav") || audioFileCount == QUEUE_FILES) continue;
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || audioFileCount == QUEUE_FILES) continue;
+        if (!is_audio_name(entry.cFileName)) continue;
 
         size_t nameLength = wcslen(entry.cFileName);
         wchar_t *file = malloc((folderLength + nameLength + 2) * sizeof(wchar_t));
@@ -460,13 +477,218 @@ static int scan_audio_files(const wchar_t *folder)
     return audioFileCount;
 }
 
+static float *allocate_samples(drwav_uint64 frames, unsigned channels)
+{
+    return frames ? malloc((size_t)(frames * channels) * sizeof(float)) : NULL;
+}
+
+typedef float *(*Decoder)(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames);
+
+static uint32_t read_uint(const unsigned char *bytes, unsigned count, int littleEndian)
+{
+    uint32_t value = 0;
+    for (unsigned i = 0; i < count; i++)
+        value |= (uint32_t)bytes[i] << (8 * (littleEndian ? i : count - 1 - i));
+    return value;
+}
+
+static uint64_t read_uint64(const unsigned char *bytes, int littleEndian)
+{
+    uint64_t value = 0;
+    for (unsigned i = 0; i < 8; i++)
+        value |= (uint64_t)bytes[i] << (8 * (littleEndian ? i : 7 - i));
+    return value;
+}
+
+static double extended_rate(const unsigned char *bytes)
+{
+    int exponent = (bytes[0] & 0x7f) << 8 | bytes[1];
+    if (!exponent) return 0;
+    double value = ldexp((double)read_uint64(bytes + 2, 0), exponent - 16383 - 63);
+    return bytes[0] & 0x80 ? -value : value;
+}
+
+/* AIFF and AIFF-C store their samples big-endian in the SSND chunk, with 80-bit
+   extended sample rates and a compression type that only AIFF-C files carry. */
+
+static float *decode_aiff(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames)
+{
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) return NULL;
+
+    unsigned char header[12], chunk[8];
+    if (fread(header, 1, sizeof header, file) != sizeof header || memcmp(header, "FORM", 4)) {
+        fclose(file);
+        return NULL;
+    }
+
+    unsigned bits = 0;
+    uint32_t compression = 0;
+    drwav_uint64 total = 0;
+    long soundStart = -1, soundBytes = 0;
+
+    for (;;) {
+        if (fread(chunk, 1, sizeof chunk, file) != sizeof chunk) break;
+        uint32_t size = read_uint(chunk + 4, 4, 0);
+        long body = ftell(file);
+        if (!memcmp(chunk, "COMM", 4) && size >= 18) {
+            unsigned char comm[22];
+            size_t wanted = size < sizeof comm ? size : sizeof comm;
+            if (fread(comm, 1, wanted, file) != wanted) break;
+            *channels = read_uint(comm, 2, 0);
+            total = read_uint(comm + 2, 4, 0);
+            bits = read_uint(comm + 6, 2, 0);
+            *rate = (unsigned)(extended_rate(comm + 8) + 0.5);
+            if (wanted == sizeof comm) compression = read_uint(comm + 18, 4, 0);
+        } else if (!memcmp(chunk, "SSND", 4) && size >= 8) {
+            unsigned char sound[8];
+            if (fread(sound, 1, sizeof sound, file) != sizeof sound) break;
+            uint32_t offset = read_uint(sound, 4, 0);
+            soundStart = body + 8 + (long)offset;
+            soundBytes = (long)size - 8 - (long)offset;
+            break;
+        }
+        if (fseek(file, body + (long)size + (size & 1), SEEK_SET)) break;
+    }
+
+    int littleEndian = compression == 0x736f7774;    /* 'sowt' */
+    int floating = compression == 0x666c3332 || compression == 0x464c3332 ||
+                   compression == 0x666c3634 || compression == 0x464c3634;  /* 'fl32' 'FL32' 'fl64' 'FL64' */
+    int pcm = !compression || compression == 0x4e4f4e45 || littleEndian ||
+              compression == 0x696e3234 || compression == 0x696e3332;      /* 'NONE' 'in24' 'in32' */
+    unsigned width = (bits + 7) / 8;
+
+    if (!*channels || !*rate || !total || !width || (!pcm && !floating) || soundStart < 0) {
+        fclose(file);
+        return NULL;
+    }
+
+    drwav_uint64 available = (drwav_uint64)(soundBytes / (long)(width * *channels));
+    if (total > available) total = available;
+
+    float *samples = allocate_samples(total, *channels);
+    unsigned char *buffer = samples ? malloc(16384 * *channels * width) : NULL;
+    if (!buffer || fseek(file, soundStart, SEEK_SET)) {
+        free(samples);
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+
+    drwav_uint64 done = 0;
+    while (done < total) {
+        drwav_uint64 want = total - done < 16384 ? total - done : 16384;
+        size_t got = fread(buffer, width * *channels, (size_t)want, file);
+        if (!got) break;
+        for (size_t frame = 0; frame < got; frame++) {
+            for (unsigned channel = 0; channel < *channels; channel++) {
+                const unsigned char *sample = buffer + (frame * *channels + channel) * width;
+                float value;
+                if (floating && width == 4) {
+                    uint32_t raw = read_uint(sample, 4, littleEndian);
+                    memcpy(&value, &raw, 4);
+                } else if (floating) {
+                    uint64_t raw = read_uint64(sample, littleEndian);
+                    double wide;
+                    memcpy(&wide, &raw, 8);
+                    value = (float)wide;
+                } else
+                    value = (float)((int32_t)(read_uint(sample, width, littleEndian) << (32 - bits)) >> (32 - bits)) /
+                            (float)(1u << (bits - 1));
+                samples[(done + frame) * *channels + channel] = value;
+            }
+        }
+        done += got;
+    }
+
+    free(buffer);
+    fclose(file);
+    *frames = done;
+    return samples;
+}
+
+static float *decode_wav(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames)
+{
+    drwav wav;
+    if (!drwav_init_file_w(&wav, path, NULL)) return NULL;
+    *channels = wav.channels;
+    *rate = wav.sampleRate;
+    float *samples = allocate_samples(wav.totalPCMFrameCount, *channels);
+    if (samples) *frames = drwav_read_pcm_frames_f32(&wav, wav.totalPCMFrameCount, samples);
+    drwav_uninit(&wav);
+    return samples;
+}
+
+static float *decode_flac(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames)
+{
+    drflac *flac = drflac_open_file_w(path, NULL);
+    if (!flac) return NULL;
+    *channels = flac->channels;
+    *rate = flac->sampleRate;
+    float *samples = allocate_samples(flac->totalPCMFrameCount, *channels);
+    if (samples) *frames = drflac_read_pcm_frames_f32(flac, flac->totalPCMFrameCount, samples);
+    drflac_close(flac);
+    return samples;
+}
+
+static float *decode_mp3(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames)
+{
+    drmp3 mp3;
+    if (!drmp3_init_file_w(&mp3, path, NULL)) return NULL;
+    *channels = mp3.channels;
+    *rate = mp3.sampleRate;
+    drwav_uint64 total = drmp3_get_pcm_frame_count(&mp3);
+    float *samples = allocate_samples(total, *channels);
+    if (samples) *frames = drmp3_read_pcm_frames_f32(&mp3, total, samples);
+    drmp3_uninit(&mp3);
+    return samples;
+}
+
+static float *decode_vorbis(const wchar_t *path, unsigned *channels, unsigned *rate, drwav_uint64 *frames)
+{
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) return NULL;
+    int error = 0;
+    stb_vorbis *vorbis = stb_vorbis_open_file(file, 1, &error, NULL);
+    if (!vorbis) {
+        fclose(file);
+        return NULL;
+    }
+    stb_vorbis_info info = stb_vorbis_get_info(vorbis);
+    *channels = (unsigned)info.channels;
+    *rate = info.sample_rate;
+    drwav_uint64 total = (drwav_uint64)stb_vorbis_stream_length_in_samples(vorbis);
+    float *samples = allocate_samples(total, *channels);
+    if (samples)
+        *frames = (drwav_uint64)stb_vorbis_get_samples_float_interleaved(vorbis, info.channels, samples, (int)(total * *channels));
+    stb_vorbis_close(vorbis);
+    return samples;
+}
+
 static int decode_track(Track *track, const wchar_t *path)
 {
+    unsigned char magic[12];
+    size_t read = 0;
+    FILE *file = _wfopen(path, L"rb");
+    if (file) {
+        read = fread(magic, 1, sizeof magic, file);
+        fclose(file);
+    }
+
+    Decoder decode = decode_wav;
+    if (read == sizeof magic) {
+        if (!memcmp(magic, "FORM", 4) && (!memcmp(magic + 8, "AIFF", 4) || !memcmp(magic + 8, "AIFC", 4)))
+            decode = decode_aiff;
+        else if (!memcmp(magic, "fLaC", 4)) decode = decode_flac;
+        else if (!memcmp(magic, "OggS", 4)) decode = decode_vorbis;
+        else if (!memcmp(magic, "ID3", 3) || (magic[0] == 0xff && (magic[1] & 0xe0) == 0xe0)) decode = decode_mp3;
+    }
+
     unsigned channels = 0, rate = 0;
     drwav_uint64 frames = 0;
-    float *samples = drwav_open_file_and_read_pcm_frames_f32_w(path, &channels, &rate, &frames, NULL);
+    float *samples = decode(path, &channels, &rate, &frames);
     if (!samples || !channels || !rate || !frames) {
-        drwav_free(samples, NULL);
+        free(samples);
         log_error("Could not decode '%ls'.\n", path);
         return -1;
     }
@@ -487,7 +709,7 @@ static int start_playlist_w(const wchar_t *folder)
         return -1;
     }
     if (scan_audio_files(path) <= 0) {
-        log_error("Could not find any .wav files in '%ls'.\n", path);
+        log_error("Could not find any audio files in '%ls'.\n", path);
         free(path);
         return -1;
     }
@@ -935,6 +1157,12 @@ static void scan_tree(const wchar_t *folder, const wchar_t *extension, PathVisit
     FindClose(find);
 }
 
+static void scan_audio_tree(const wchar_t *folder, PathVisitor visit)
+{
+    for (size_t i = 0; i < sizeof audioExtensions / sizeof *audioExtensions; i++)
+        scan_tree(folder, audioExtensions[i], visit);
+}
+
 static double random_unit(void)
 {
     return ((double)rand() * (RAND_MAX + 1.0) + rand()) / ((RAND_MAX + 1.0) * (RAND_MAX + 1.0));
@@ -993,7 +1221,7 @@ static void add_sample(const wchar_t *path)
         int length = WideCharToMultiByte(CP_ACP, 0, relative, -1, NULL, 0, NULL, NULL);
         drum->name = length > 0 ? malloc((size_t)length) : NULL;
         if (!drum->name) {
-            drwav_free(drum->track.samples, NULL);
+            free(drum->track.samples);
             free((void *)path);
             return;
         }
@@ -1021,10 +1249,10 @@ static void load_drums(const char *folder)
     }
 
     drumRootLength = wcslen(path);
-    scan_tree(path, L".wav", add_sample);
+    scan_audio_tree(path, add_sample);
     free(path);
     if (!drumCount) {
-        log_error("No .wav files under samples_path '%s'.\n", folder);
+        log_error("No audio files under samples_path '%s'.\n", folder);
         return;
     }
 
@@ -2737,10 +2965,10 @@ static void shutdown_monitor(void)
         deviceEnumerator = NULL;
     }
     free_buffers();
-    for (int i = 0; i < stemCount; i++) drwav_free(stems[i].samples, NULL);
+    for (int i = 0; i < stemCount; i++) free(stems[i].samples);
     free(stems);
     for (int i = 0; i < drumCount; i++) {
-        drwav_free(drums[i].track.samples, NULL);
+        free(drums[i].track.samples);
         free(drums[i].name);
     }
     free(drums);
@@ -2989,7 +3217,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
             g.midiChannel = options.inputChannel;
             if (!options.midiIn) options.midiIn = options.instrument;
         } else {
-            log_error("Instrument '%s' is neither a folder of wav files, an installed ASIO driver "
+            log_error("Instrument '%s' is neither a folder of audio files, an installed ASIO driver "
                       "nor a MIDI input.\n", options.instrument);
             list_devices();
             return 1;
@@ -3083,7 +3311,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     print_selection(g.outCh, g.nOut);
     printf("\n");
     if (playlistMode) {
-        printf("  %d wav files mixed from ", stemCount);
+        printf("  %d audio files mixed from ", stemCount);
         print_wide_path(playlistFolder);
         printf("\n");
     }
