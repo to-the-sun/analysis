@@ -90,10 +90,10 @@ across patterns or across the file. Measure each region on its own terms.
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
 7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input. The
-   overlap rating uses `transience_rating.exe` (Windows) or `transience_rating`
-   beside the scripts, built from `transience_rating.c` and this folder's own
-   copy of `cumulative_transience.c` and `cumulative_transience.h`; those are
-   the skill's copies, and `analysis/cumulative_transience.c` is not used.
+   overlap rating compiles `transience_rating.c` with `cc` on first use and
+   runs the binary beside the scripts. It uses this folder's own copy of
+   `cumulative_transience.c` and `cumulative_transience.h`;
+   `analysis/cumulative_transience.c` is not used.
 
 ### 0a. The passes format
 

@@ -25,8 +25,18 @@ import passes
 
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
-RATER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                     'transience_rating.exe' if os.name == 'nt' else 'transience_rating')
+HERE = os.path.dirname(os.path.abspath(__file__))
+RATER = os.path.join(HERE, 'transience_rating')
+RATER_SOURCES = [os.path.join(HERE, n) for n in ('transience_rating.c', 'cumulative_transience.c')]
+
+
+def rater_executable():
+    if not os.path.exists(RATER) or os.path.getmtime(RATER) < max(map(os.path.getmtime, RATER_SOURCES)):
+        cc = shutil.which('cc') or shutil.which('gcc')
+        if not cc:
+            raise RuntimeError('no C compiler to build %s' % os.path.basename(RATER))
+        subprocess.run([cc, '-O2', '-I', HERE] + RATER_SOURCES + ['-o', RATER, '-lm'], check=True)
+    return RATER
 
 
 def load_meta(report_dir, basename):
@@ -166,8 +176,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
 
     def proposed_rating(members):
         """Rate the proposed song: every stem in one pass, one shared history."""
-        if not os.path.exists(RATER):
-            raise RuntimeError('%s is missing; build it from transience_rating.c' % RATER)
+        rater = rater_executable()
         total = max(ends[k] for k in members)
         tmp = tempfile.mkdtemp()
         try:
@@ -179,7 +188,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
                 path = os.path.join(tmp, 'stem_%d.wav' % (n + 1))
                 wavfile.write(path, sr, np.clip(np.round(sig * 32767), -32768, 32767).astype('<i2'))
                 paths.append(path)
-            run = subprocess.run([RATER] + paths, capture_output=True, text=True)
+            run = subprocess.run([rater] + paths, capture_output=True, text=True)
             if run.returncode != 0:
                 raise RuntimeError('song rating failed: %s' % run.stderr.strip())
             return float(run.stdout.strip().splitlines()[-1])
