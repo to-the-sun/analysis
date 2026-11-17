@@ -1,6 +1,6 @@
 # restless_virtuoso
 
-Plays selected ASIO input channels, or the WAV files in a folder, on selected ASIO
+Plays selected ASIO input channels, or the audio files in a folder, on selected ASIO
 output channels, for monitoring an audio interface at ASIO latency. MIDI input can
 be played through a built-in sine synth, drum samples or a VST instrument and/or
 forwarded to a MIDI output.
@@ -52,7 +52,7 @@ played directly, as if it were the `instrument` key, and may be longer than
 `MAX_PATH`.
 
 `instrument` is an ASIO driver or MIDI input name from `--list`, or the absolute path
-of a folder. A folder's `.wav` files play together as stems and loop when the longest
+of a folder. A folder's audio files play together as stems and loop when the longest
 one ends. `input-channel` is the 1-based ASIO input, or the MIDI channel for a MIDI
 device, whose messages are then streamed to the console.
 `Focusrite USB ASIO Input 1.json` is a ready template; settings files are named after
@@ -70,7 +70,7 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
 }
 ```
 
-- `samples_path` loads every `.wav` under the folder and its subfolders as drum
+- `samples_path` loads every audio file under the folder and its subfolders as drum
   samples. Each of the 128 MIDI notes gets one by the taste lottery, and a note-on
   plays it.
 - `vsts_path` loads every 64-bit VST 2 `.dll` under the folder and its subfolders,
@@ -110,7 +110,9 @@ A key that is not an existing folder is logged and ignored.
 A folder is mixed onto the selected outputs with no ASIO input monitoring unless
 `--in` is given. Files of any channel count play on all outputs, wrapping when there
 are more outputs than file channels, and each file's sample rate is converted to the
-driver's rate.
+driver's rate. `.wav`, `.wave`, `.flac`, `.mp3`, `.ogg` and `.oga` files are picked up,
+and each one is decoded as WAV, FLAC, MP3 or Ogg Vorbis by its content rather than its
+extension.
 
 ## Loop recordings
 
