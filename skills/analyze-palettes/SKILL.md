@@ -89,7 +89,11 @@ across patterns or across the file. Measure each region on its own terms.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
-7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input.
+7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input. The
+   overlap rating uses `transience_rating.exe` (Windows) or `transience_rating`
+   beside the scripts, built from `transience_rating.c` and this folder's own
+   copy of `cumulative_transience.c` and `cumulative_transience.h`; those are
+   the skill's copies, and `analysis/cumulative_transience.c` is not used.
 
 ### 0a. The passes format
 
@@ -348,10 +352,17 @@ never combine patterns from different archives. An archive with no qualifying
 pattern still gets its own report (`patterns: []`), but has no song page or
 master.
 
-Patterns that share a sound are not layered twice. After placement, patterns are
-kept in report order; a pattern whose sound has already been used is dropped
-from the stems and master when its span overlaps a kept stem of that sound, and
-kept when it does not overlap one. `null` sounds never collide.
+Patterns that share a sound are not layered twice, and the survivor is chosen by
+rating. After placement, patterns are kept in report order. A pattern that
+overlaps no kept stem of its sound joins the song. When it does overlap one, the
+song as it stands at that moment is rated twice through the bundled copy of
+`cumulative_transience.c`: once with the new pattern and once with the kept one,
+each alongside every other stem currently in the song, all of them accumulating
+into one shared history buffer with a 15,000 ms window and 4 bands. A rating is
+the average of every score every stem produced over the whole song; the higher
+rating is admitted and the loser is dropped from the stems and master. A pattern
+is compared against each overlapping kept stem of its sound in turn. `null`
+sounds never collide.
 
 The passes file decides where each pattern begins relative to the common song
 anchor. `summary.js` stores each report's local shifted lead as `entry`, but
@@ -412,8 +423,8 @@ palette's.
 
 Guarantees:
 
-- every pattern of every palette is a stem unless an overlapping same-sound
-  repeat was dropped; no palette is skipped;
+- every pattern of every palette is a stem unless it lost an overlap rating to
+  a same-sound pattern; no palette is skipped;
 - every stem's assigned pass loop point lands at the same song anchor;
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
@@ -434,8 +445,8 @@ shared song anchor on every row.
 Song-level checks:
 
 - [ ] Builder exits 0; printed stem delta is 0 LSB; clipped is 0.
-- [ ] Stem count is the report pattern count minus same-sound repeats that
-      overlap an earlier stem; every palette still contributes.
+- [ ] Stem count is the report pattern count minus same-sound overlaps whose
+      pattern lost the rating; every palette still contributes.
 - [ ] Each stem's audio is exactly its pattern's measured region
       (`segments × length`) once, beginning at its pass-derived entry.
 - [ ] All stem rows draw in `song.html`, silent before their entry.
@@ -653,6 +664,8 @@ its region.
 - If a preview host rejects plain curl with 403, that may be the preview's
   authentication layer, not a broken app. Check loopback and use the preview
   panel.
+- Overlapping same-sound patterns are settled by the song rating, not by report
+  order. Do not go back to keeping whichever came first.
 - A song may not repeat a pattern to fill time or gate one out of part of the
   song: that stops it being heard whole.
 - Keep the zip out of itself. Re-run the zip after adding a download link if

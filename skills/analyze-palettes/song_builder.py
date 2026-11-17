@@ -13,6 +13,9 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from urllib.parse import quote
 
 import numpy as np
@@ -22,6 +25,8 @@ import passes
 
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
+RATER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'transience_rating.exe' if os.name == 'nt' else 'transience_rating')
 
 
 def load_meta(report_dir, basename):
@@ -136,18 +141,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     if len(targets) != len(pats):
         raise ValueError('song.targets must have one value per pattern')
 
-    spans = [len(p['segments']) * p['length'] for _, p in pats]
-    keep = []
-    for i, (_, p) in enumerate(pats):
-        sound = p.get('sound')
-        if sound is not None and any(
-                pats[j][1].get('sound') == sound
-                and start_s[i] < start_s[j] + spans[j]
-                and start_s[j] < start_s[i] + spans[i]
-                for j in keep):
-            continue
-        keep.append(i)
-
     pcm, offsets = {}, {}
     for base, meta in metas:
         sr2, x = read_wav(os.path.join(report_dir, '[palettes]', base + '.wav'))
@@ -161,6 +154,58 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
                 raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
             offsets[base, p['id']] = offset
+
+    def stem_signal(i):
+        base, p = pats[i]
+        reg = fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
+        return reg * 10 ** ((targets[i] - rms_db(reg)) / 20)
+
+    spans = [len(p['segments']) * p['length'] for _, p in pats]
+    ends = [int(round(start_s[i] * sr)) + len(p['segments']) * int(round(p['length'] * sr))
+            for i, (_, p) in enumerate(pats)]
+
+    def proposed_rating(members):
+        """Rate the proposed song: every stem in one pass, one shared history."""
+        if not os.path.exists(RATER):
+            raise RuntimeError('%s is missing; build it from transience_rating.c' % RATER)
+        total = max(ends[k] for k in members)
+        tmp = tempfile.mkdtemp()
+        try:
+            paths = []
+            for n, k in enumerate(members):
+                sig = np.zeros(total)
+                reg = stem_signal(k)
+                sig[int(round(start_s[k] * sr)):][:len(reg)] = reg
+                path = os.path.join(tmp, 'stem_%d.wav' % (n + 1))
+                wavfile.write(path, sr, np.clip(np.round(sig * 32767), -32768, 32767).astype('<i2'))
+                paths.append(path)
+            run = subprocess.run([RATER] + paths, capture_output=True, text=True)
+            if run.returncode != 0:
+                raise RuntimeError('song rating failed: %s' % run.stderr.strip())
+            return float(run.stdout.strip().splitlines()[-1])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    keep = []
+    for i, (_, p) in enumerate(pats):
+        sound = p.get('sound')
+        admitted = True
+        for j in [j for j in keep
+                  if sound is not None and pats[j][1].get('sound') == sound
+                  and start_s[i] < start_s[j] + spans[j]
+                  and start_s[j] < start_s[i] + spans[i]]:
+            others = [k for k in keep if k != j]
+            r_new, r_old = proposed_rating(others + [i]), proposed_rating(others + [j])
+            print('overlap %s: pattern %s rated %.6f, pattern %s rated %.6f'
+                  % (sound, p['id'], r_new, pats[j][1]['id'], r_old))
+            if r_new > r_old:
+                keep.remove(j)
+            else:
+                admitted = False
+                break
+        if admitted:
+            keep.append(i)
+
     regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
             for base, p in (pats[i] for i in keep)]
     offs = [int(round(start_s[i] * sr)) for i in keep]
