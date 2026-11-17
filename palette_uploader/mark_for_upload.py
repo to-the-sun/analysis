@@ -4,15 +4,16 @@ import os
 from pathlib import Path
 
 PAIR = (("palette_", ".wav"), ("passes_", ".txt"))
+EXTRA = (("sounds_", ".txt"),)
 
 found = {}
 for entry in Path.cwd().iterdir():
     name = entry.name.lower()
-    for prefix, extension in PAIR:
+    for prefix, extension in PAIR + EXTRA:
         if name.startswith(prefix) and name.endswith(extension):
             found.setdefault(name[len(prefix):-len(extension)], {})[prefix] = entry
 
-marked = [match for match in found.values() if len(match) == len(PAIR)]
+marked = [match for match in found.values() if all(prefix in match for prefix, _ in PAIR)]
 for match in marked:
     for entry in match.values():
         os.utime(entry)

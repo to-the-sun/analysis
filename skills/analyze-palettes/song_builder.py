@@ -136,6 +136,18 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     if len(targets) != len(pats):
         raise ValueError('song.targets must have one value per pattern')
 
+    spans = [len(p['segments']) * p['length'] for _, p in pats]
+    keep = []
+    for i, (_, p) in enumerate(pats):
+        sound = p.get('sound')
+        if sound is not None and any(
+                pats[j][1].get('sound') == sound
+                and start_s[i] < start_s[j] + spans[j]
+                and start_s[j] < start_s[i] + spans[i]
+                for j in keep):
+            continue
+        keep.append(i)
+
     pcm, offsets = {}, {}
     for base, meta in metas:
         sr2, x = read_wav(os.path.join(report_dir, '[palettes]', base + '.wav'))
@@ -149,14 +161,15 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
                 raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
             offsets[base, p['id']] = offset
-    regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr) for base, p in pats]
-    offs = [int(round(t * sr)) for t in start_s]
+    regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
+            for base, p in (pats[i] for i in keep)]
+    offs = [int(round(start_s[i] * sr)) for i in keep]
     song = max(o + len(r) for o, r in zip(offs, regs))
     dur = song / sr
     stems, gains = [], []
-    for i, reg in enumerate(regs):
+    for n, (i, reg) in enumerate(zip(keep, regs)):
         stem = np.zeros(song, dtype=np.float32)
-        stem[offs[i]:offs[i] + len(reg)] = reg
+        stem[offs[n]:offs[n] + len(reg)] = reg
         stems.append(stem)
         gains.append(10 ** ((targets[i] - rms_db(reg)) / 20))
     del regs
@@ -179,7 +192,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     del stems
 
     stems_pcm = [wavfile.read(os.path.join(stem_dir, 'pattern_%d.wav' % (i + 1)))[1]
-                 for i in range(len(pats))]
+                 for i in range(len(names))]
     summed = np.zeros(song, dtype=np.int32)
     for s in stems_pcm:
         summed += s
@@ -193,27 +206,30 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'bar': round(bar_of[0], 4),
         'bars': int(round(dur / bar_of[0])),
         'anchor': round(shift, 6),
-        'loops': [[round(start_s[i] + L - p['start'], 6)
-                   for L in loop_times[base]
-                   if p['start'] <= L <= p['start'] + len(p['segments']) * p['length']]
-                  for i, (base, p) in enumerate(pats)],
+        'loops': [[round(start_s[i] + L - pats[i][1]['start'], 6)
+                   for L in loop_times[pats[i][0]]
+                   if pats[i][1]['start'] <= L <= pats[i][1]['start']
+                   + len(pats[i][1]['segments']) * pats[i][1]['length']]
+                  for i in keep],
     }
     with open(os.path.join(stem_data, 'arr.js'), 'w') as f:
         f.write('window.ARR_META = ' + json.dumps(arr_meta, separators=(',', ':')) + ';\n')
 
-    labels = ['%s \u00b7 %s' % (palette_tag(base), p.get('name', 'Pattern %d' % (i + 1)))
-              if len(metas) > 1 else p.get('name', 'Pattern %d' % (i + 1))
-              for i, (base, p) in enumerate(pats)]
+    labels = ['%s \u00b7 %s' % (palette_tag(pats[i][0]),
+                                pats[i][1].get('name', 'Pattern %d' % (i + 1)))
+              if len(metas) > 1 else pats[i][1].get('name', 'Pattern %d' % (i + 1))
+              for i in keep]
     defs = ',\n'.join(
         "  { file: '%%5Bstems%%5D/%s.wav', name: %s, meta: %s, color: %s }" % (
-            names[i], json.dumps(labels[i]),
-            json.dumps('%d bars &middot; %.3f s' % (region_bars[i], p['length'] * len(p['segments']))),
-            json.dumps(p.get('color', '#4dabf7')))
-        for i, (base, p) in enumerate(pats))
+            names[n], json.dumps(labels[n]),
+            json.dumps('%d bars &middot; %.3f s' % (region_bars[i], pats[i][1]['length']
+                                                   * len(pats[i][1]['segments']))),
+            json.dumps(pats[i][1].get('color', '#4dabf7')))
+        for n, i in enumerate(keep))
     summary = ('%d patterns from %d palette%s (%d:%04.1f), %d Hz mono. Each pattern plays its whole '
                'region once from its pass anchor; the %d stems sum to the master.'
-               % (len(pats), len(metas), '' if len(metas) == 1 else 's',
-                  int(dur // 60), dur % 60, sr, len(pats)))
+               % (len(keep), len(metas), '' if len(metas) == 1 else 's',
+                  int(dur // 60), dur % 60, sr, len(keep)))
     html_text = page_html('Song &mdash; ' + os.path.splitext(master_name)[0], summary, defs,
                           json.dumps(arr_meta, separators=(',', ':')), dur,
                           '../' + quote(master_name))
@@ -228,7 +244,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             card = ('<a class="card" href="song.html"><strong>Song &mdash; %s</strong>'
                     '<span>Master plus %d stems &middot; %d:%04.1f &middot; arrangement view</span>'
                     '<span class="btn">Open song</span></a>\n'
-                    % (os.path.splitext(master_name)[0], len(pats), int(dur // 60), dur % 60))
+                    % (os.path.splitext(master_name)[0], len(keep), int(dur // 60), dur % 60))
             text = text.replace('<div class="list">', '<div class="list">\n' + card, 1)
             with open(idx, 'w') as f:
                 f.write(text)
@@ -249,7 +265,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'clipped': int(np.sum(np.abs(song_pcm) >= 32767)),
         'stem_delta_lsb': delta,
         'gains_db': [round(20 * np.log10(g), 1) for g in gains],
-        'entries': [round(s, 6) for s in start_s],
+        'entries': [round(start_s[i], 6) for i in keep],
     }
     return out
 

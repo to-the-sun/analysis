@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 STATE = HERE / "palette_watcher_drive_state.json"
 LOG = HERE / "palette_watcher_drive.log"
 PAIR = (("palette_", ".wav"), ("passes_", ".txt"))
+EXTRA = (("sounds_", ".txt"),)
 
 
 def log(message):
@@ -74,16 +75,18 @@ def pairs(since, until):
         found = {}
         for entry in folder.iterdir():
             name = entry.name.lower()
-            for prefix, extension in PAIR:
+            for prefix, extension in PAIR + EXTRA:
                 if name.startswith(prefix) and name.endswith(extension):
                     found.setdefault(name[len(prefix):-len(extension)], {})[prefix] = entry
         settled = {
             key: match
             for key, match in found.items()
-            if len(match) == len(PAIR) and all(modified(match[prefix]) <= until for prefix, _ in PAIR)
+            if all(prefix in match for prefix, _ in PAIR)
+            and all(modified(entry) <= until for entry in match.values())
         }
         if any(since < modified(entry) for match in settled.values() for entry in match.values()):
-            yield folder.relative_to(PROJECTS).parts[0], [settled[key][prefix] for key in sorted(settled) for prefix, _ in PAIR]
+            yield folder.relative_to(PROJECTS).parts[0], [settled[key][prefix] for key in sorted(settled)
+                                                          for prefix, _ in PAIR + EXTRA if prefix in settled[key]]
 
 
 def load_state():

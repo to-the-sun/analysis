@@ -68,6 +68,8 @@ def pattern_cards(patterns):
         meta = (f"{fmt_precise(p['start'])} &ndash; {fmt_precise(p['end'])} &middot; "
                 f"{p['length']:.3f} s &middot; {p['bars']} bar{'s' if p['bars'] != 1 else ''} &middot; "
                 f"{len(segs)} segments &middot; pass {p['pass']} lead {p['passLead']:+.2f} s")
+        if p.get('sound'):
+            meta += f" &middot; sound {p['sound']}"
         chips = []
         for j, s in enumerate(segs):
             dur = s['end'] - s['start']
@@ -898,11 +900,15 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
     duration = total / sr
     passes_path = passes.find_passes_file(src_path)
     spans = passes.pass_spans(passes.parse_passes(passes_path), duration)
+    sounds_path = passes.find_sounds_file(src_path)
+    sounds = passes.parse_sounds(sounds_path) if sounds_path else []
 
     data_dir = os.path.join(out_dir, DATA_DIR, basename)
     os.makedirs(data_dir, exist_ok=True)
     wavfile.write(os.path.join(data_dir, basename + '.wav'), sr, pcm)
     shutil.copyfile(passes_path, os.path.join(data_dir, os.path.basename(passes_path)))
+    if sounds_path:
+        shutil.copyfile(sounds_path, os.path.join(data_dir, os.path.basename(sounds_path)))
 
     patterns = []
     for i, p in enumerate(spec.get('patterns', [])):
@@ -933,6 +939,7 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
             'pass': span['index'],
             'passStart': round(span['loop'], 3),
             'passLead': round(lead, 6),
+            'sound': passes.dominant_sound(start, end, sounds, duration),
             'segments': segments,
         })
 
@@ -959,6 +966,18 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
             f.write('# bar %.6f\n' % (patterns[0]['length'] / max(1, patterns[0]['bars'])))
         f.writelines('%d, %.6f %.6f;\n' % (i, s * 1000.0 / sr, p['entry'] * 1000.0)
                      for i, (s, p) in enumerate(zip(seams or [0], patterns or [{'entry': 0.0}])))
+    if sounds_path:
+        with open(os.path.join(palette_dir, os.path.basename(sounds_path)), 'w') as f:
+            index = 0
+            for p, seam in zip(patterns, seams):
+                active = [m for m in sounds if m['time'] <= p['start']]
+                marks = ([active[-1]] if active else []) + \
+                        [m for m in sounds if p['start'] < m['time'] < p['end']]
+                for mark in marks:
+                    f.write('%d, %.6f %d;\n' % (
+                        index, (seam / sr + max(0.0, mark['time'] - p['start'])) * 1000.0,
+                        mark['number']))
+                    index += 1
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
     levels_meta = []

@@ -54,9 +54,9 @@ across patterns or across the file. Measure each region on its own terms.
    Query with `trashed = false`; never process trash, shortcuts, other folders,
    or duplicate copies. Each zip archive in that folder is a separate batch and
    song: give it its own report folder, master and song. Extract one archive into
-   `artifacts/<archive-stem>/source/` and list its audio files. Keep the palette
-   and its passes file together, and remember which archive they came from: that
-   archive names the song master. `[2026-11-12-19-7-9].zip` yields the master
+   `artifacts/<archive-stem>/source/` and list its audio files. Keep the palette,
+   its passes file and any sounds file together, and remember which archive they
+   came from: that archive names the song master. `[2026-11-12-19-7-9].zip` yields the master
    `[2026-11-12-19-7-9].wav`. Pass the archive to `song_builder.py --archive`;
    `finished_song.wav` is only the fallback for audio that did not arrive in an
    archive. An archive may hold several palettes; they stay in that archive's
@@ -81,6 +81,11 @@ across patterns or across the file. Measure each region on its own terms.
 
    `passes.py` does this discovery for the scripts. If no passes file is found,
    stop and ask for it; do not fall back to a guessed song placement.
+
+   A `sounds_<stamp>.txt` beside the palette is optional. It holds one
+   `index, milliseconds number;` line per sound change. Each pattern is marked
+   with the sound it overlaps most; without the file every pattern's `sound` is
+   `null`.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
@@ -294,7 +299,11 @@ from, at the same lengths and the same entries. The builder also writes the sour
 uses, so a report still plays from the packaged zip without the extracted
 source. Beside the copy it writes the original passes file, as
 `[data]/<audio-basename>/<passes-basename>.txt`, so the loop placement travels
-with the audio.
+with the audio. When the source has a sounds file, its original is copied there
+too, and a shifted copy is written beside the generated palette and passes: a
+mark inside a pattern moves to that pattern's seam plus its offset into the
+pattern, and the sound in force at a pattern's start is carried to its seam, so
+every time matches the compact WAV.
 
 Output layout:
 
@@ -305,9 +314,11 @@ artifacts/<batch>/
     <audio-basename>.html
     [palettes]/<audio-basename>.wav
     [palettes]/<passes-basename>.txt
+    [palettes]/<sounds-basename>.txt   (only with a sounds file)
     [data]/<audio-basename>/
       <audio-basename>.wav
       <passes-basename>.txt
+      <sounds-basename>.txt            (only with a sounds file)
       summary.js
       l8_*.js
       l64_*.js
@@ -336,6 +347,11 @@ folder holds several archives, they are separate batches and separate songs;
 never combine patterns from different archives. An archive with no qualifying
 pattern still gets its own report (`patterns: []`), but has no song page or
 master.
+
+Patterns that share a sound are not layered twice. After placement, patterns are
+kept in report order; a pattern whose sound has already been used is dropped
+from the stems and master when its span overlaps a kept stem of that sound, and
+kept when it does not overlap one. `null` sounds never collide.
 
 The passes file decides where each pattern begins relative to the common song
 anchor. `summary.js` stores each report's local shifted lead as `entry`, but
@@ -396,7 +412,8 @@ palette's.
 
 Guarantees:
 
-- every pattern of every palette is one stem; no palette is skipped;
+- every pattern of every palette is a stem unless an overlapping same-sound
+  repeat was dropped; no palette is skipped;
 - every stem's assigned pass loop point lands at the same song anchor;
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
@@ -417,8 +434,8 @@ shared song anchor on every row.
 Song-level checks:
 
 - [ ] Builder exits 0; printed stem delta is 0 LSB; clipped is 0.
-- [ ] Stem count equals the sum of every report's pattern count; every palette
-      contributes all of its patterns to the one song.
+- [ ] Stem count is the report pattern count minus same-sound repeats that
+      overlap an earlier stem; every palette still contributes.
 - [ ] Each stem's audio is exactly its pattern's measured region
       (`segments × length`) once, beginning at its pass-derived entry.
 - [ ] All stem rows draw in `song.html`, silent before their entry.
@@ -504,11 +521,13 @@ Builder-level:
 - [ ] `[data]/<audio-basename>/l8_0.js` exists and its first bins match the PCM.
 - [ ] `[data]/<audio-basename>/<audio-basename>.wav` exists and every report's
       player resolves to it inside the packaged folder, with the original
-      `<passes-basename>.txt` beside it.
+      `<passes-basename>.txt` beside it, plus `<sounds-basename>.txt` when the
+      source had one.
 - [ ] `[palettes]/` holds a generated WAV of the palette's stems in order and
       a passes file giving their seams as loop points, 0.0 first, with each
       stem's entry as its pad, and each stem is followed by the one-second
-      silent buffer that keeps a re-analysis sectioned.
+      silent buffer that keeps a re-analysis sectioned. A source sounds file is
+      written beside them with every mark shifted onto the compact timeline.
 - [ ] When a song is built, the stem sum check passes and the song page loads
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
@@ -539,8 +558,8 @@ unzip -t analyze-palettes.zip
 ```
 
 The archive root holds the master WAV beside the `pattern_reports/` folder.
-Include the index, all HTML reports, the generated `[palettes]/` WAVs and
-passes files, the `[data]/` chunks and audio copies, and when a song was built,
+Include the index, all HTML reports, the generated `[palettes]/` WAVs, passes
+and sounds files, the `[data]/` chunks and audio copies, and when a song was built,
 `song.html` plus
 `[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
 they share the folder and the one master. Package each archive's batch
