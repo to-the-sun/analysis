@@ -110,9 +110,9 @@ A key that is not an existing folder is logged and ignored.
 A folder is mixed onto the selected outputs with no ASIO input monitoring unless
 `--in` is given. Files of any channel count play on all outputs, wrapping when there
 are more outputs than file channels, and each file's sample rate is converted to the
-driver's rate. `.wav`, `.wave`, `.flac`, `.mp3`, `.ogg` and `.oga` files are picked up,
-and each one is decoded as WAV, FLAC, MP3 or Ogg Vorbis by its content rather than its
-extension.
+driver's rate. `.wav`, `.wave`, `.aif`, `.aiff`, `.flac`, `.mp3`, `.ogg` and `.oga` files are
+picked up, and each one is decoded as WAV, AIFF, FLAC, MP3 or Ogg Vorbis by its content
+rather than its extension.
 
 ## Loop recordings
 
