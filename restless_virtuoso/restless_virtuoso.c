@@ -352,11 +352,11 @@ static void drain_midi(void)
         int velocity = (int)(message >> 16) & 0x7f;
         if (status == 0x90 && velocity > 0) {
             synth_note_on(note, velocity / 127.0f);
-            trigger_drum(note);
+            if (g.samplesSound) trigger_drum(note);
         } else if (status == 0x80 || status == 0x90) {
             synth_note_off(note);
         }
-        if (vstEffect && status < 0xf0) {
+        if (!g.samplesSound && vstEffect && status < 0xf0) {
             if (status == 0x80 || status == 0x90 || status == 0xa0)
                 message = (message & 0xffff00ffu) | (uint32_t)vst_note(note) << 8;
             queue_midi_event(message);
@@ -1235,6 +1235,7 @@ static void add_sample(const wchar_t *path)
 static void assign_drums(void)
 {
     for (int note = 0; note < 128; note++) drumNoteDrum[note] = weighted_pick(drumTaste, drumCount);
+    memset(drumVoices, 0, sizeof drumVoices);
 }
 
 static void load_drums(const char *folder)
@@ -1486,7 +1487,7 @@ static void send_vst_program_change(int program)
     vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, &events, 0);
 }
 
-static int start_vst(int library)
+static int start_vst(int library, int program)
 {
     AEffect *effect = create_effect(vstLibraries[library]);
     if (!effect) return -1;
@@ -1507,7 +1508,10 @@ static int start_vst(int library)
     vstRangeLow = vstLibraryLow[library];
     vstRangeHigh = vstLibraryHigh[library];
     vstOctave = rand() % (2 * VST_MAX_OCTAVE + 1) - VST_MAX_OCTAVE;
-    vstProgram = vstPresetCount > 0 ? weighted_pick(vstTastes[library], vstPresetCount) : 0;
+    vstProgram = 0;
+    if (vstPresetCount > 0)
+        vstProgram = program >= 0 && program < vstPresetCount ? program
+                                                             : weighted_pick(vstTastes[library], vstPresetCount);
     if (vstPresetCount > 1)
         effect->dispatcher(effect, effSetProgram, 0, vstProgram, NULL, 0);
 
@@ -1987,20 +1991,8 @@ static void load_vsts(const char *folder)
     load_vst_stats(path);
     scan_tree(path, L".dll", add_vst);
     free(path);
-    if (!vstLibraryCount) {
+    if (!vstLibraryCount)
         log_error("No VST plugins under vsts_path '%s'.\n", folder);
-        return;
-    }
-
-    int order[VST_MAX_PLUGINS];
-    for (int i = 0; i < vstLibraryCount; i++) order[i] = i;
-    shuffle(order, vstLibraryCount);
-
-    for (int i = 0; i < vstLibraryCount; i++)
-        if (start_vst(order[i]) == 0) return;
-
-    log_error("%d plugins under vsts_path '%s', but none could be started.\n",
-              vstLibraryCount, folder);
 }
 
 static void render_vst(float *dst, int outputs, int frames)
@@ -2038,7 +2030,7 @@ static void render_vst(float *dst, int outputs, int frames)
 
 static void choose_sound(int samplesRatio)
 {
-    g.samplesSound = drumCount && (!vstEffect || rand() % 100 < samplesRatio);
+    g.samplesSound = drumCount && (!vstLibraryCount || rand() % 100 < samplesRatio);
 }
 
 static void render_instruments(float *dst, int outputs, int frames)
@@ -2059,18 +2051,46 @@ static void close_vst_effect(void)
     vstActiveLibrary = -1;
 }
 
-static int pick_vst_library(void)
+/* One draw over every preset of every plugin, so a plugin's share of the lottery is
+   the sum of its presets' tickets and nothing depends on which plugin came up first. */
+static int pick_vst_preset(int *library, int *program)
 {
     long long total = 0;
-    for (int i = 0; i < vstLibraryCount; i++)
+    for (int i = 0; i < vstLibraryCount; i++) {
+        if (!vstTastes[i]) continue;
         for (int j = 0; j < vstLibraryPresets[i]; j++) total += vstTastes[i][j];
-    if (total <= 0) return rand() % vstLibraryCount;
+    }
+    if (total <= 0) return -1;
 
     long long ticket = (long long)(random_unit() * (double)total);
-    for (int i = 0; i < vstLibraryCount; i++)
+    for (int i = 0; i < vstLibraryCount; i++) {
+        if (!vstTastes[i]) continue;
         for (int j = 0; j < vstLibraryPresets[i]; j++)
-            if ((ticket -= vstTastes[i][j]) < 0) return i;
-    return vstLibraryCount - 1;
+            if ((ticket -= vstTastes[i][j]) < 0) {
+                *library = i;
+                *program = j;
+                return 0;
+            }
+    }
+    return -1;
+}
+
+static int start_drawn_vst(void)
+{
+    if (!vstLibraryCount) return -1;
+
+    int library = -1, program = -1, order[VST_MAX_PLUGINS], count = 0;
+
+    if (pick_vst_preset(&library, &program) == 0) order[count++] = library;
+    for (int i = 0; i < vstLibraryCount; i++)
+        if (i != library) order[count++] = i;
+    shuffle(order + (library >= 0), count - (library >= 0));
+
+    for (int i = 0; i < count; i++)
+        if (start_vst(order[i], order[i] == library ? program : -1) == 0) return 0;
+
+    log_error("None of the %d loaded plugins could be started.\n", vstLibraryCount);
+    return -1;
 }
 
 static void new_vst_sound(void)
@@ -2083,15 +2103,7 @@ static void new_vst_sound(void)
     }
 
     close_vst_effect();
-
-    int order[VST_MAX_PLUGINS], count = 0;
-    order[count++] = pick_vst_library();
-    for (int i = 0; i < vstLibraryCount; i++)
-        if (i != order[0]) order[count++] = i;
-    shuffle(order + 1, count - 1);
-
-    for (int i = 0; i < count; i++)
-        if (start_vst(order[i]) == 0) break;
+    start_drawn_vst();
 
     if (g.asio->vtable->start(g.asio) != ASE_OK) {
         log_error("ASIOStart failed after changing the VST.\n");
@@ -3298,6 +3310,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
         choose_sound(options.samplesRatio);
+        if (!g.samplesSound) start_drawn_vst();
     }
     log_trace("rate and buffer set\n");
     if (create_buffers() != 0) goto done;

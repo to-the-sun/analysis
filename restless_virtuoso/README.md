@@ -74,9 +74,10 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   samples. Each of the 128 MIDI notes gets one by the taste lottery, and a note-on
   plays it.
 - `vsts_path` loads every 64-bit VST 2 `.dll` under the folder and its subfolders,
-  then picks one by the taste lottery and sets a preset on it the same way. Plugins
-  without factory presets keep their default. `vsti_stats.txt` in that folder supplies the
-  real preset count and MIDI range for each plugin:
+  then plays a preset drawn by the taste lottery from one pool holding every preset
+  of every plugin. Plugins without factory presets keep their default.
+  `vsti_stats.txt` in that folder supplies the real preset count and MIDI range for
+  each plugin:
 
   ```json
   {
@@ -94,15 +95,16 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   `vsti_stats.txt` is not there.
 - `samples_ratio` is the percentage chance, 0 to 100 (default 50), that a new sound
   comes from `samples_path` instead of `vsts_path` when both are loaded. Only one of
-  them plays.
+  them plays, and MIDI reaches only that one: note-ons trigger drum samples only
+  while a drum sound is drawn, and reach the plugin only while a VST preset is.
 - `taste` holds, in whole seconds, how long each drum sample and each preset of
   each plugin has sounded above -60 dBFS. A second counts in full if the sound
   peaked above the gate anywhere in it. Every entry starts at 1; `new sound` draws
-  by weighted lottery with one ticket per second of taste, once over all presets
-  and once per MIDI note over the drum samples. Samples are keyed by their path
-  under `samples_path`, presets by their 1-based number under the plugin's file
-  name, e.g. `Dexed.dll`. The instance writes the session's totals back into the settings file when
-  it closes.
+  by weighted lottery with one ticket per second of taste, from one pool of every
+  preset of every plugin, and once per MIDI note over the drum samples. Samples are
+  keyed by their path under `samples_path`, presets by their 1-based number under the
+  plugin's file name, e.g. `Dexed.dll`. The instance writes the session's totals back
+  into the settings file when it closes.
 
 The sine synth stays off in this mode; the loaded instrument is the sound source.
 A key that is not an existing folder is logged and ignored.
