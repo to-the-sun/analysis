@@ -83,9 +83,11 @@ across patterns or across the file. Measure each region on its own terms.
    stop and ask for it; do not fall back to a guessed song placement.
 
    A `sounds_<stamp>.txt` beside the palette is optional. It holds one
-   `index, milliseconds number;` line per sound change. Each pattern is marked
-   with the sound it overlaps most; without the file every pattern's `sound` is
-   `null`.
+   `index, milliseconds number mode;` line per sound change, where `mode` is
+   `samples` for a drum sample set, `synth` for a VST preset (the default), or
+   the line has no number and reads `index, milliseconds other;` for a device
+   that applies no sound. Each pattern takes the mark it overlaps most; without
+   the file every pattern's `sound` and `mode` are `null`.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
@@ -311,8 +313,8 @@ source. Beside the copy it writes the original passes file, as
 with the audio. When the source has a sounds file, its original is copied there
 too, and a shifted copy is written beside the generated palette and passes: a
 mark inside a pattern moves to that pattern's seam plus its offset into the
-pattern, and the sound in force at a pattern's start is carried to its seam, so
-every time matches the compact WAV.
+pattern, and the mark in force at a pattern's start is carried to its seam, mode
+and all, so every time matches the compact WAV.
 
 Output layout:
 
@@ -357,16 +359,20 @@ never combine patterns from different archives. An archive with no qualifying
 pattern still gets its own report (`patterns: []`), but has no song page or
 master.
 
-Patterns that share a sound are not layered twice, and the survivor is chosen by
-rating. After placement, patterns are kept in report order. A pattern that
-overlaps no kept stem of its sound joins the song. When it does overlap one, the
+Patterns that share a sound class are not layered twice, and the survivor is
+chosen by rating. The class comes from the pattern's mark: `samples` puts every
+drum sample set of the archive in one class whatever its number, `synth` keys on
+the sound number, and `other` keys on the palette, so a device that applies no
+sound competes only with its own palette. A pattern with neither sound nor mode
+never collides. After placement, patterns are kept in report order. A pattern
+that overlaps no kept stem of its class joins the song. When it does overlap one, the
 song as it stands at that moment is rated twice through the bundled copy of
 `cumulative_transience.c`: once with the new pattern and once with the kept one,
 each alongside every other stem currently in the song, all of them accumulating
 into one shared history buffer with a 15,000 ms window and 4 bands. A rating is
 the average of every score every stem produced over the whole song; the higher
 rating is admitted and the loser is dropped from the stems and master. A pattern
-is compared against each overlapping kept stem of its sound in turn. `null`
+is compared against each overlapping kept stem of its class in turn. `null`
 sounds never collide.
 
 The passes file decides where each pattern begins relative to the common song
@@ -431,7 +437,7 @@ palette's.
 Guarantees:
 
 - every pattern of every palette is a stem unless it lost an overlap rating to
-  a same-sound pattern; no palette is skipped;
+  a pattern of its sound class; no palette is skipped;
 - every stem's assigned pass loop point lands at the same song anchor;
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
@@ -455,7 +461,7 @@ shared song anchor on every row.
 Song-level checks:
 
 - [ ] Builder exits 0; printed stem delta is 0 LSB; clipped is 0.
-- [ ] Stem count is the report pattern count minus same-sound overlaps whose
+- [ ] Stem count is the report pattern count minus class overlaps whose
       pattern lost the rating; every palette still contributes.
 - [ ] Each stem's audio is exactly its pattern's measured region
       (`segments × length`) once, beginning at its pass-derived entry, and the
@@ -675,8 +681,8 @@ its region.
 - If a preview host rejects plain curl with 403, that may be the preview's
   authentication layer, not a broken app. Check loopback and use the preview
   panel.
-- Overlapping same-sound patterns are settled by the song rating, not by report
-  order. Do not go back to keeping whichever came first.
+- Overlapping patterns of the same sound class are settled by the song rating,
+  not by report order. Do not go back to keeping whichever came first.
 - A song may not repeat a pattern to fill time or gate one out of part of the
   song: that stops it being heard whole.
 - Keep the zip out of itself. Re-run the zip after adding a download link if

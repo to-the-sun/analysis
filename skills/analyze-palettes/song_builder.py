@@ -120,6 +120,14 @@ def stem_meta(p):
     return meta + (' &middot; sound %s' % p['sound'] if p.get('sound') else '')
 
 
+def sound_class(base, p):
+    if p.get('mode') == 'samples':
+        return ('samples',)
+    if p.get('mode') == 'other':
+        return ('palette', base)
+    return ('sound', p['sound']) if p.get('sound') is not None else None
+
+
 def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     metas = []
     for r in reports:
@@ -201,17 +209,17 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             shutil.rmtree(tmp, ignore_errors=True)
 
     keep = []
-    for i, (_, p) in enumerate(pats):
-        sound = p.get('sound')
+    for i, (base, p) in enumerate(pats):
+        key = sound_class(base, p)
         admitted = True
         for j in [j for j in keep
-                  if sound is not None and pats[j][1].get('sound') == sound
+                  if key is not None and sound_class(*pats[j]) == key
                   and start_s[i] < start_s[j] + spans[j]
                   and start_s[j] < start_s[i] + spans[i]]:
             others = [k for k in keep if k != j]
             r_new, r_old = proposed_rating(others + [i]), proposed_rating(others + [j])
             print('overlap %s: pattern %s rated %.6f, pattern %s rated %.6f'
-                  % (sound, p['id'], r_new, pats[j][1]['id'], r_old))
+                  % (' '.join(str(k) for k in key), p['id'], r_new, pats[j][1]['id'], r_old))
             if r_new > r_old:
                 keep.remove(j)
             else:
