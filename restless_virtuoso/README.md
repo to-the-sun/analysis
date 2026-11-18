@@ -132,17 +132,23 @@ take ends, and its files are completed, when the stems instance exits or the rec
 instance is closed. Closing with the console's own close button is handled too, since
 the program waits for the files before it lets Windows end it.
 
-An instrument instance also writes `sounds_YYYY-MM-DD-HH-MM-SS.txt` beside its take,
-one `index, milliseconds number;` line recording the sound it started with and each
-`new sound`, timed from the take's start. Every running instance shares one numbered
-list of sounds, so a number identifies a drum sample set or VST preset in every take,
-and the console prints the number with the description.
+Every take also gets a `sounds_YYYY-MM-DD-HH-MM-SS.txt` beside it. An instrument take
+records one `index, milliseconds number mode;` line for the sound it started with and
+each `new sound`, timed from the take's start; `mode` is `samples` for a drum sample
+set and `synth` for a VST preset. Every running instance shares one numbered list of
+sounds, so a number identifies a drum sample set or VST preset in every take, and the
+console prints the number with the description. A take with no sound applied holds
+the single line `0, 0.000000 other;`.
 
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
 
-In instrument mode, click `new sound` in the console for another random sound, drawn
+In instrument mode, click anywhere in the console for another random sound, drawn
 from `samples_path` or `vsts_path` by `samples_ratio`.
+
+The instance analyzes the audio it plays with the cumulative transience algorithm
+on a background thread, using a 15,000 ms window, its cumulative history buffer and
+four bands, and prints every score it produces to the console.
 
 ## Notes
 

@@ -20,6 +20,7 @@
 
 #include "asio_abi.h"
 #include "dsp.h"
+#include "cumulative_transience.h"
 #include "vst_abi.h"
 #define DR_WAV_IMPLEMENTATION
 #include "../analysis/dr_wav.h"
@@ -36,6 +37,8 @@
 #define DEFAULT_DRIVER "Focusrite USB ASIO"
 #define TASTE_START 1
 #define TASTE_GATE 0.001f
+#define ANALYSIS_WINDOW_MS 15000
+#define ANALYSIS_BANDS 4
 
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
@@ -776,6 +779,7 @@ typedef struct TakeChunk {
 typedef struct {
     ULONGLONG qpc;
     int number;
+    const char *mode;
 } SoundMark;
 
 typedef struct {
@@ -860,7 +864,8 @@ static void add_sound_mark(int number, ULONGLONG qpc)
         take.soundCapacity = capacity;
     }
     take.soundMarks[take.soundCount].qpc = qpc;
-    take.soundMarks[take.soundCount++].number = number;
+    take.soundMarks[take.soundCount].number = number;
+    take.soundMarks[take.soundCount++].mode = g.samplesSound ? "samples" : "synth";
 }
 
 static void check_loop_cue(void)
@@ -1035,20 +1040,21 @@ static void take_finish(void)
             log_trace("wrote %ls\n", take.passesPath);
         }
 
-        if (instrumentMode && take.soundCount) {
-            FILE *sounds = _wfopen(take.soundsPath, L"w");
-            if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
+        FILE *sounds = _wfopen(take.soundsPath, L"w");
+        if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
+        else {
+            if (!take.soundCount) fputs("0, 0.000000 other;\n", sounds);
             else {
                 LARGE_INTEGER frequency;
                 QueryPerformanceFrequency(&frequency);
                 for (int i = 0; i < take.soundCount; i++)
-                    fprintf(sounds, "%d, %.6f %d;\n", i,
+                    fprintf(sounds, "%d, %.6f %d %s;\n", i,
                             (double)(LONGLONG)(take.soundMarks[i].qpc - take.origin) * 1000.0 /
                             (double)frequency.QuadPart,
-                            take.soundMarks[i].number);
-                fclose(sounds);
-                log_trace("wrote %ls\n", take.soundsPath);
+                            take.soundMarks[i].number, take.soundMarks[i].mode);
             }
+            fclose(sounds);
+            log_trace("wrote %ls\n", take.soundsPath);
         }
     }
 
@@ -2168,16 +2174,24 @@ static void sound_name(char *out, size_t size)
     }
 }
 
+/* Overwrites the meters line in place, so a message leaves no blank line behind it. */
+static void console_line(const char *text)
+{
+    printf("\r%-*s\n", g.lineWidth, text);
+    fflush(stdout);
+    g.lineWidth = 0;
+}
+
 static void print_sound(const char *prefix)
 {
-    char name[160];
+    char name[160], line[192];
     sound_name(name, sizeof name);
     g.soundNumber = 0;
     if (!name[0]) return;
 
     g.soundNumber = sound_number(name, g.samplesSound);
-    printf("  %s%d: %s\n", prefix, g.soundNumber, name);
-    fflush(stdout);
+    snprintf(line, sizeof line, "  %s%d: %s", prefix, g.soundNumber, name);
+    console_line(line);
     log_trace("sound %d: %s\n", g.soundNumber, name);
 }
 
@@ -2187,12 +2201,10 @@ static void new_sound(void)
     if (g.samplesSound) assign_drums();
     else new_vst_sound();
 
-    printf("\n");
     print_sound("new sound ");
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
-    g.lineWidth = 0;
 }
 
 static void close_vst(void)
@@ -2262,6 +2274,110 @@ static float read_master_volume(void)
     return volume;
 }
 
+/* The callback only appends the mix to this ring; a background thread analyzes it, so
+   the ASIO thread never does the transform work. */
+#define ANALYSIS_RING 262144
+
+static TransientAnalyzer *analysisAnalyzer;
+static float *analysisRing;
+static volatile LONG analysisWrite, analysisRead;
+static HANDLE analysisThread;
+
+static void analysis_push(const float *samples, int frames)
+{
+    if (!analysisRing) return;
+
+    LONG write = analysisWrite, read = analysisRead;
+    for (int i = 0; i < frames; i++) {
+        LONG next = write + 1 == ANALYSIS_RING ? 0 : write + 1;
+        if (next == read) break;
+        analysisRing[write] = samples[i];
+        write = next;
+    }
+    analysisWrite = write;
+}
+
+static int analysis_take(float *out, int count)
+{
+    LONG read = analysisRead, write = analysisWrite;
+    int available = (int)((write - read + ANALYSIS_RING) % ANALYSIS_RING);
+    if (available < count) return 0;
+
+    for (int i = 0; i < count; i++) {
+        out[i] = analysisRing[read];
+        if (++read == ANALYSIS_RING) read = 0;
+    }
+    analysisRead = read;
+    return 1;
+}
+
+static DWORD WINAPI analysis_thread(LPVOID unused)
+{
+    (void)unused;
+    ChunkAnalysisResult *chunk = malloc(sizeof *chunk);
+    float *pushed = NULL;
+    int rate = 0, step = 0, hop = 1;
+    long long total = 0;
+
+    while (!g.quit) {
+        int sr = (int)g.rate;
+        if (sr != rate) {
+            rate = sr;
+            step = (int)(sr * 0.1);
+            hop = (int)(sr * 0.001);
+            if (hop < 1) hop = 1;
+            free(pushed);
+            pushed = step > 0 ? calloc((size_t)step, sizeof *pushed) : NULL;
+            if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
+            analysisAnalyzer = sr > 0 ? analyzer_create(1.0, NULL, NULL, NULL, NULL, ANALYSIS_WINDOW_MS, ANALYSIS_BANDS) : NULL;
+            if (analysisAnalyzer) analyzer_set_sample_rate(analysisAnalyzer, sr);
+            total = 0;
+            analysisRead = analysisWrite = 0;
+        }
+        if (!analysisAnalyzer || !pushed || !chunk || !analysis_take(pushed, step)) {
+            Sleep(10);
+            continue;
+        }
+
+        int act = (int)(total - rate * 0.2);
+        int win = act - (int)(rate * (ANALYSIS_WINDOW_MS / 1000.0));
+        if (win < 0) win = 0;
+        analyzer_analyze_chunk(analysisAnalyzer, pushed, step, rate, win / hop, act / hop, chunk);
+        total += step;
+
+        for (int i = 0; i < chunk->peak_list.num_peaks; i++) {
+            PeakResult *peak = &chunk->peak_list.peaks[i];
+            char line[96];
+            snprintf(line, sizeof line, "  band %d  %9.1f ms  score %.6f", peak->band_idx, peak->time * 1000.0, peak->total_score);
+            console_line(line);
+        }
+    }
+
+    if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
+    analysisAnalyzer = NULL;
+    free(pushed);
+    free(chunk);
+    return 0;
+}
+
+static void analysis_start(void)
+{
+    analysisRing = calloc(ANALYSIS_RING, sizeof *analysisRing);
+    if (analysisRing) analysisThread = CreateThread(NULL, 8 << 20, analysis_thread, NULL, 0, NULL);
+}
+
+static void analysis_stop(void)
+{
+    if (analysisThread) {
+        InterlockedExchange(&g.quit, 1);
+        WaitForSingleObject(analysisThread, 3000);
+        CloseHandle(analysisThread);
+        analysisThread = NULL;
+    }
+    free(analysisRing);
+    analysisRing = NULL;
+}
+
 static void process_buffer(int32_t index)
 {
     const int frames = (int)g.bufferSize;
@@ -2308,6 +2424,7 @@ static void process_buffer(int32_t index)
         sample_from_float(g.mixFloats, output, g.outFormat[j], frames);
         if (take.active) take_mix(g.mixFloats, frames);
     }
+    analysis_push(g.mixFloats, frames);
 
     if (take.active) {
         take.last->frames += (size_t)frames;
@@ -2866,7 +2983,6 @@ static void list_devices(void)
 static HANDLE consoleInput;
 static DWORD consoleMode;
 static int consoleModeSet;
-static COORD soundButton;
 
 static void init_console_input(void)
 {
@@ -2877,19 +2993,6 @@ static void init_console_input(void)
     }
     consoleModeSet = SetConsoleMode(consoleInput,
         ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_PROCESSED_INPUT);
-}
-
-static void draw_sound_button(void)
-{
-    CONSOLE_SCREEN_BUFFER_INFO info;
-    fflush(stdout);
-    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info))
-        soundButton = info.dwCursorPosition;
-
-    printf("+-----------+\n"
-           "| new sound |\n"
-           "+-----------+\n");
-    fflush(stdout);
 }
 
 static void read_console_input(void)
@@ -2905,11 +3008,7 @@ static void read_console_input(void)
         for (DWORD i = 0; i < read; i++) {
             if (records[i].EventType != MOUSE_EVENT || !instrumentMode) continue;
             MOUSE_EVENT_RECORD *mouse = &records[i].Event.MouseEvent;
-            if (mouse->dwEventFlags || !(mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED)) continue;
-            if (mouse->dwMousePosition.X < soundButton.X || mouse->dwMousePosition.X > soundButton.X + 12 ||
-                mouse->dwMousePosition.Y < soundButton.Y || mouse->dwMousePosition.Y > soundButton.Y + 2)
-                continue;
-            new_sound();
+            if (!mouse->dwEventFlags && (mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED)) new_sound();
         }
     }
 }
@@ -3358,7 +3457,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     log_trace("started\n");
 
     init_console_input();
-    if (instrumentMode) draw_sound_button();
+    analysis_start();
 
     ULONGLONG lastDraw = 0;
     while (!g.quit) {
@@ -3413,7 +3512,9 @@ static int run(int argc, char **argv, const wchar_t *folder)
     exitCode = 0;
 
 done:
+    /* shutdown_monitor stops the driver, so no audio callback can reach the ring. */
     shutdown_monitor();
+    analysis_stop();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
     printf("\n");
