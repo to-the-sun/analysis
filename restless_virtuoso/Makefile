@@ -1,8 +1,8 @@
 WIN_CC = $(shell which x86_64-w64-mingw32-gcc 2>/dev/null || echo /tmp/llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64/bin/x86_64-w64-mingw32-gcc)
-CFLAGS = -O2 -Wall -Wextra -std=c11 -I../analysis
+CFLAGS = -O2 -Wall -Wextra -std=c11
 LDLIBS = -lwinmm -lole32 -luser32 -ladvapi32 -lshell32
 
-restless_virtuoso.exe: restless_virtuoso.c dsp.c cumulative_transience.c asio_abi.h dsp.h vst_abi.h dr_flac.h dr_mp3.h stb_vorbis.c ../analysis/dr_wav.h ../analysis/cumulative_transience.h
+restless_virtuoso.exe: restless_virtuoso.c dsp.c cumulative_transience.c cumulative_transience.h asio_abi.h dsp.h vst_abi.h dr_flac.h dr_mp3.h stb_vorbis.c ../analysis/dr_wav.h
 	$(WIN_CC) $(CFLAGS) restless_virtuoso.c dsp.c cumulative_transience.c -o $@ $(LDLIBS)
 
 clean:

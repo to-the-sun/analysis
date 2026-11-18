@@ -3509,8 +3509,9 @@ static int run(int argc, char **argv, const wchar_t *folder)
     exitCode = 0;
 
 done:
-    analysis_stop();
+    /* shutdown_monitor stops the driver, so no audio callback can reach the ring. */
     shutdown_monitor();
+    analysis_stop();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
     printf("\n");
