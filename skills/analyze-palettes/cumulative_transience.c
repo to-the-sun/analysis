@@ -539,6 +539,7 @@ void analyzer_push_audio(TransientAnalyzer* self, const float* y, int len, int s
 
         int f_idx = self->cache_write_ptr;
         double frame_max = -DBL_MAX;
+        bool silent = true;
 
         for (int i = 0; i < N_FFT; i++) {
             long long g_idx = center_sample_global - N_FFT / 2 + i;
@@ -548,10 +549,41 @@ void analyzer_push_audio(TransientAnalyzer* self, const float* y, int len, int s
                 self->fft_real[i] = 0.0;
             } else {
                 int l_idx = (int)(g_idx - current_scratch_start);
-                self->fft_real[i] = (double)self->combined_scratch[l_idx] * self->fft_window[i];
+                float sample = self->combined_scratch[l_idx];
+                if (sample != 0.0f) silent = false;
+                self->fft_real[i] = (double)sample * self->fft_window[i];
             }
             self->fft_imag[i] = 0.0;
         }
+
+        // A window of digital silence has a closed-form mel band (the noise floor,
+        // clamped) and flux, so its FFT is skipped without changing any value.
+        if (silent) {
+            double floor = self->max_mel_db - 80.0;
+            int prev = (f_idx - 1 + CACHE_SIZE) % CACHE_SIZE;
+            int mels_per_band = N_MELS / self->num_bands;
+            for (int m = 0; m < N_MELS; m++) self->mel_spectrogram[m * CACHE_SIZE + f_idx] = floor;
+            for (int b = 0; b < self->num_bands; b++) {
+                double fsum = 0;
+                int m_start = b * mels_per_band;
+                int m_end = (b == self->num_bands - 1) ? N_MELS : (b + 1) * mels_per_band;
+                for (int m = m_start; m < m_end; m++) {
+                    double d = floor - self->mel_spectrogram[m * CACHE_SIZE + prev];
+                    if (d > 0) fsum += d;
+                }
+                float flux = (float)(fsum / (double)(m_end - m_start));
+                self->flux_envelopes[b * CACHE_SIZE + f_idx] = flux;
+                float prev_smooth = self->smoothing_states[b];
+                if (flux > prev_smooth) self->smoothing_states[b] = flux;
+                else self->smoothing_states[b] = prev_smooth - (prev_smooth - flux) / 200.0f;
+                self->dynamic_smoothings[b * CACHE_SIZE + f_idx] = self->smoothing_states[b];
+            }
+            self->cache_write_ptr = (self->cache_write_ptr + 1) % CACHE_SIZE;
+            if (self->cache_count < CACHE_SIZE) self->cache_count++;
+            self->total_frames_pushed++;
+            continue;
+        }
+
         fft(self->fft_real, self->fft_imag, N_FFT);
 
         for (int m = 0; m < N_MELS; m++) {
