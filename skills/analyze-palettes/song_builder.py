@@ -114,6 +114,12 @@ def palette_tag(basename):
     return basename[8:] if basename.lower().startswith('palette_') else basename
 
 
+def stem_meta(p):
+    meta = '%d bars &middot; %.3f s' % (len(p['segments']) * p['bars'],
+                                       p['length'] * len(p['segments']))
+    return meta + (' &middot; sound %s' % p['sound'] if p.get('sound') else '')
+
+
 def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     metas = []
     for r in reports:
@@ -137,7 +143,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
             pass_pads[base] = {}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
-    region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
@@ -279,9 +284,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
               for i in keep]
     defs = ',\n'.join(
         "  { file: '%%5Bstems%%5D/%s.wav', name: %s, meta: %s, color: %s }" % (
-            names[n], json.dumps(labels[n]),
-            json.dumps('%d bars &middot; %.3f s' % (region_bars[i], pats[i][1]['length']
-                                                   * len(pats[i][1]['segments']))),
+            names[n], json.dumps(labels[n]), json.dumps(stem_meta(pats[i][1])),
             json.dumps(pats[i][1].get('color', '#4dabf7')))
         for n, i in enumerate(keep))
     summary = ('%d patterns from %d palette%s (%d:%04.1f), %d Hz mono. Each pattern plays its whole '
