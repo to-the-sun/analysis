@@ -779,6 +779,7 @@ typedef struct TakeChunk {
 typedef struct {
     ULONGLONG qpc;
     int number;
+    const char *mode;
 } SoundMark;
 
 typedef struct {
@@ -863,7 +864,8 @@ static void add_sound_mark(int number, ULONGLONG qpc)
         take.soundCapacity = capacity;
     }
     take.soundMarks[take.soundCount].qpc = qpc;
-    take.soundMarks[take.soundCount++].number = number;
+    take.soundMarks[take.soundCount].number = number;
+    take.soundMarks[take.soundCount++].mode = g.samplesSound ? "samples" : "synth";
 }
 
 static void check_loop_cue(void)
@@ -1038,20 +1040,21 @@ static void take_finish(void)
             log_trace("wrote %ls\n", take.passesPath);
         }
 
-        if (instrumentMode && take.soundCount) {
-            FILE *sounds = _wfopen(take.soundsPath, L"w");
-            if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
+        FILE *sounds = _wfopen(take.soundsPath, L"w");
+        if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
+        else {
+            if (!take.soundCount) fputs("0, 0.000000 other;\n", sounds);
             else {
                 LARGE_INTEGER frequency;
                 QueryPerformanceFrequency(&frequency);
                 for (int i = 0; i < take.soundCount; i++)
-                    fprintf(sounds, "%d, %.6f %d;\n", i,
+                    fprintf(sounds, "%d, %.6f %d %s;\n", i,
                             (double)(LONGLONG)(take.soundMarks[i].qpc - take.origin) * 1000.0 /
                             (double)frequency.QuadPart,
-                            take.soundMarks[i].number);
-                fclose(sounds);
-                log_trace("wrote %ls\n", take.soundsPath);
+                            take.soundMarks[i].number, take.soundMarks[i].mode);
             }
+            fclose(sounds);
+            log_trace("wrote %ls\n", take.soundsPath);
         }
     }
 
