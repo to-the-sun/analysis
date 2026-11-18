@@ -195,6 +195,11 @@ Passes do not cut or snap patterns:
 5. The song starts each stem at its entry. A negative raw lead is normal: it
    means the pattern starts before its pass's loop point. The pattern with the
    smallest lead defines the song's zero.
+6. After overlap rating has dropped its losers, re-zero on the smallest **kept**
+   lead and move the anchor earlier by the same amount. If the dropped pattern
+   held entry 0 the song would otherwise open with silence. `song_builder.py`
+   trims this before it writes the stems, so the master, the stems, the page
+   timeline and the bar count all start at the first kept audio.
 
 Do not round the entry to a bar, and do not move a pattern start onto a loop
 point to make the lead zero. The lead is whatever the measured start and the
@@ -369,8 +374,9 @@ anchor. `summary.js` stores each report's local shifted lead as `entry`, but
 `song_builder.py` recomputes placement from `start - passStart` across every
 pattern in every palette, using one global shift. Every pattern's assigned pass
 loop point lands at the same song time, the anchor; the pattern with the
-smallest lead starts at 0. There is no manual `starts` list, and adding
-`song.starts` to the spec is an error. Entries are seconds, not bars.
+smallest kept lead starts at 0, because overlap rating re-zeroes the entries and
+the anchor before anything is written. There is no manual `starts` list, and
+adding `song.starts` to the spec is an error. Entries are seconds, not bars.
 
 Add a `song` block for levels only (at the top level of the spec when the archive
 holds several palettes):
@@ -387,7 +393,8 @@ holds several palettes):
   stem at the entry that puts its loop anchor on the common anchor, and needs
   no common grid.
 - Song length is fixed by the patterns, not chosen: it is the furthest entry
-  time plus that pattern's whole region, across every palette.
+  time plus that pattern's whole region, across every palette, measured after
+  any leading trim.
 
 ```bash
 python3 song_builder.py --spec report-spec.json \
@@ -429,6 +436,8 @@ Guarantees:
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
   anti-click ramp at each end of the region;
+- no leading silence survives a dropped pattern: entries and the anchor are
+  re-zeroed on the first kept pattern before anything is written;
 - stems are trimmed to their targets, then share one master scale;
 - the master is written as the exact sum of the quantized stems, so the stems
   reconstruct it sample for sample and the builder's sum check is 0 LSB;
@@ -448,7 +457,8 @@ Song-level checks:
 - [ ] Stem count is the report pattern count minus same-sound overlaps whose
       pattern lost the rating; every palette still contributes.
 - [ ] Each stem's audio is exactly its pattern's measured region
-      (`segments × length`) once, beginning at its pass-derived entry.
+      (`segments × length`) once, beginning at its pass-derived entry, and the
+      earliest kept entry is 0.000 s.
 - [ ] All stem rows draw in `song.html`, silent before their entry.
 - [ ] A deep zoom loads a finer `a*.js` level and Reset Zoom restores the view.
 - [ ] Click-to-seek starts playback; mute toggles one stem.

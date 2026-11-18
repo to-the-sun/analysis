@@ -215,6 +215,10 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         if admitted:
             keep.append(i)
 
+    trim = min(start_s[i] for i in keep)
+    start_s = [max(0.0, s - trim) for s in start_s]
+    shift -= trim
+
     regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
             for base, p in (pats[i] for i in keep)]
     offs = [int(round(start_s[i] * sr)) for i in keep]
@@ -320,6 +324,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'stem_delta_lsb': delta,
         'gains_db': [round(20 * np.log10(g), 1) for g in gains],
         'entries': [round(start_s[i], 6) for i in keep],
+        'trimmed': round(trim, 6),
     }
     return out
 
@@ -342,7 +347,8 @@ def main():
           % (res['duration'], res['bars'], res['peak_db'], res['rms_db'], res['clipped']))
     print('stems  %d  sum delta %d LSB  gains %s'
           % (len(res['stems']), res['stem_delta_lsb'], res['gains_db']))
-    print('anchor %.3f s' % res['anchor'])
+    print('anchor %.3f s%s' % (res['anchor'], ('  trimmed %.3f s leading' % res['trimmed'])
+                               if res['trimmed'] else ''))
     print('entries %s' % (', '.join('%.3f' % s for s in res['entries'])))
     print('page   %s' % res['page'])
 
