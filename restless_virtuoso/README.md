@@ -141,8 +141,12 @@ and the console prints the number with the description.
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
 
-In instrument mode, click `new sound` in the console for another random sound, drawn
+In instrument mode, click anywhere in the console for another random sound, drawn
 from `samples_path` or `vsts_path` by `samples_ratio`.
+
+The instance analyzes the audio it plays with the cumulative transience algorithm
+on a background thread, using a 15,000 ms window, its cumulative history buffer and
+four bands, and prints every score it produces to the console.
 
 ## Notes
 
