@@ -13,6 +13,9 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from urllib.parse import quote
 
 import numpy as np
@@ -22,6 +25,18 @@ import passes
 
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
+HERE = os.path.dirname(os.path.abspath(__file__))
+RATER = os.path.join(HERE, 'transience_rating')
+RATER_SOURCES = [os.path.join(HERE, n) for n in ('transience_rating.c', 'cumulative_transience.c')]
+
+
+def rater_executable():
+    if not os.path.exists(RATER) or os.path.getmtime(RATER) < max(map(os.path.getmtime, RATER_SOURCES)):
+        cc = shutil.which('cc') or shutil.which('gcc')
+        if not cc:
+            raise RuntimeError('no C compiler to build %s' % os.path.basename(RATER))
+        subprocess.run([cc, '-O2', '-I', HERE] + RATER_SOURCES + ['-o', RATER, '-lm'], check=True)
+    return RATER
 
 
 def load_meta(report_dir, basename):
@@ -99,6 +114,12 @@ def palette_tag(basename):
     return basename[8:] if basename.lower().startswith('palette_') else basename
 
 
+def stem_meta(p):
+    meta = '%d bars &middot; %.3f s' % (len(p['segments']) * p['bars'],
+                                       p['length'] * len(p['segments']))
+    return meta + (' &middot; sound %s' % p['sound'] if p.get('sound') else '')
+
+
 def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     metas = []
     for r in reports:
@@ -122,7 +143,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             pass_loops[base] = {p['pass']: float(p['passStart']) for p in m['patterns']}
             pass_pads[base] = {}
     bar_of = [p['length'] / max(1, p['bars']) for _, p in pats]
-    region_bars = [len(p['segments']) * p['bars'] for _, p in pats]
 
     cfg = spec.get('song') or next((r['song'] for r in reports if 'song' in r), {})
     if cfg.get('starts'):
@@ -135,18 +155,6 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     targets = cfg.get('targets') or [-20.0] * len(pats)
     if len(targets) != len(pats):
         raise ValueError('song.targets must have one value per pattern')
-
-    spans = [len(p['segments']) * p['length'] for _, p in pats]
-    keep = []
-    for i, (_, p) in enumerate(pats):
-        sound = p.get('sound')
-        if sound is not None and any(
-                pats[j][1].get('sound') == sound
-                and start_s[i] < start_s[j] + spans[j]
-                and start_s[j] < start_s[i] + spans[i]
-                for j in keep):
-            continue
-        keep.append(i)
 
     pcm, offsets = {}, {}
     for base, meta in metas:
@@ -161,6 +169,61 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             if offset + len(p['segments']) * int(round(p['length'] * sr)) > len(x):
                 raise ValueError('%s palette is too short for pattern %d' % (base, p['id']))
             offsets[base, p['id']] = offset
+
+    def stem_signal(i):
+        base, p = pats[i]
+        reg = fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
+        return reg * 10 ** ((targets[i] - rms_db(reg)) / 20)
+
+    spans = [len(p['segments']) * p['length'] for _, p in pats]
+    ends = [int(round(start_s[i] * sr)) + len(p['segments']) * int(round(p['length'] * sr))
+            for i, (_, p) in enumerate(pats)]
+
+    def proposed_rating(members):
+        """Rate the proposed song: every stem in one pass, one shared history."""
+        rater = rater_executable()
+        total = max(ends[k] for k in members)
+        tmp = tempfile.mkdtemp()
+        try:
+            paths = []
+            for n, k in enumerate(members):
+                sig = np.zeros(total)
+                reg = stem_signal(k)
+                sig[int(round(start_s[k] * sr)):][:len(reg)] = reg
+                path = os.path.join(tmp, 'stem_%d.wav' % (n + 1))
+                wavfile.write(path, sr, np.clip(np.round(sig * 32767), -32768, 32767).astype('<i2'))
+                paths.append(path)
+            run = subprocess.run([rater] + paths, capture_output=True, text=True)
+            if run.returncode != 0:
+                raise RuntimeError('song rating failed: %s' % run.stderr.strip())
+            return float(run.stdout.strip().splitlines()[-1])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    keep = []
+    for i, (_, p) in enumerate(pats):
+        sound = p.get('sound')
+        admitted = True
+        for j in [j for j in keep
+                  if sound is not None and pats[j][1].get('sound') == sound
+                  and start_s[i] < start_s[j] + spans[j]
+                  and start_s[j] < start_s[i] + spans[i]]:
+            others = [k for k in keep if k != j]
+            r_new, r_old = proposed_rating(others + [i]), proposed_rating(others + [j])
+            print('overlap %s: pattern %s rated %.6f, pattern %s rated %.6f'
+                  % (sound, p['id'], r_new, pats[j][1]['id'], r_old))
+            if r_new > r_old:
+                keep.remove(j)
+            else:
+                admitted = False
+                break
+        if admitted:
+            keep.append(i)
+
+    trim = min(start_s[i] for i in keep)
+    start_s = [max(0.0, s - trim) for s in start_s]
+    shift -= trim
+
     regs = [fade_edges(region(pcm[base], sr, p, offsets[base, p['id']]), sr)
             for base, p in (pats[i] for i in keep)]
     offs = [int(round(start_s[i] * sr)) for i in keep]
@@ -221,9 +284,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
               for i in keep]
     defs = ',\n'.join(
         "  { file: '%%5Bstems%%5D/%s.wav', name: %s, meta: %s, color: %s }" % (
-            names[n], json.dumps(labels[n]),
-            json.dumps('%d bars &middot; %.3f s' % (region_bars[i], pats[i][1]['length']
-                                                   * len(pats[i][1]['segments']))),
+            names[n], json.dumps(labels[n]), json.dumps(stem_meta(pats[i][1])),
             json.dumps(pats[i][1].get('color', '#4dabf7')))
         for n, i in enumerate(keep))
     summary = ('%d patterns from %d palette%s (%d:%04.1f), %d Hz mono. Each pattern plays its whole '
@@ -266,6 +327,7 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
         'stem_delta_lsb': delta,
         'gains_db': [round(20 * np.log10(g), 1) for g in gains],
         'entries': [round(start_s[i], 6) for i in keep],
+        'trimmed': round(trim, 6),
     }
     return out
 
@@ -288,7 +350,8 @@ def main():
           % (res['duration'], res['bars'], res['peak_db'], res['rms_db'], res['clipped']))
     print('stems  %d  sum delta %d LSB  gains %s'
           % (len(res['stems']), res['stem_delta_lsb'], res['gains_db']))
-    print('anchor %.3f s' % res['anchor'])
+    print('anchor %.3f s%s' % (res['anchor'], ('  trimmed %.3f s leading' % res['trimmed'])
+                               if res['trimmed'] else ''))
     print('entries %s' % (', '.join('%.3f' % s for s in res['entries'])))
     print('page   %s' % res['page'])
 

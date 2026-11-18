@@ -89,7 +89,11 @@ across patterns or across the file. Measure each region on its own terms.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
-7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input.
+7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input. The
+   overlap rating compiles `transience_rating.c` with `cc` on first use and
+   runs the binary beside the scripts. It uses this folder's own copy of
+   `cumulative_transience.c` and `cumulative_transience.h`;
+   `analysis/cumulative_transience.c` is not used.
 
 ### 0a. The passes format
 
@@ -191,6 +195,11 @@ Passes do not cut or snap patterns:
 5. The song starts each stem at its entry. A negative raw lead is normal: it
    means the pattern starts before its pass's loop point. The pattern with the
    smallest lead defines the song's zero.
+6. After overlap rating has dropped its losers, re-zero on the smallest **kept**
+   lead and move the anchor earlier by the same amount. If the dropped pattern
+   held entry 0 the song would otherwise open with silence. `song_builder.py`
+   trims this before it writes the stems, so the master, the stems, the page
+   timeline and the bar count all start at the first kept audio.
 
 Do not round the entry to a bar, and do not move a pattern start onto a loop
 point to make the lead zero. The lead is whatever the measured start and the
@@ -348,18 +357,26 @@ never combine patterns from different archives. An archive with no qualifying
 pattern still gets its own report (`patterns: []`), but has no song page or
 master.
 
-Patterns that share a sound are not layered twice. After placement, patterns are
-kept in report order; a pattern whose sound has already been used is dropped
-from the stems and master when its span overlaps a kept stem of that sound, and
-kept when it does not overlap one. `null` sounds never collide.
+Patterns that share a sound are not layered twice, and the survivor is chosen by
+rating. After placement, patterns are kept in report order. A pattern that
+overlaps no kept stem of its sound joins the song. When it does overlap one, the
+song as it stands at that moment is rated twice through the bundled copy of
+`cumulative_transience.c`: once with the new pattern and once with the kept one,
+each alongside every other stem currently in the song, all of them accumulating
+into one shared history buffer with a 15,000 ms window and 4 bands. A rating is
+the average of every score every stem produced over the whole song; the higher
+rating is admitted and the loser is dropped from the stems and master. A pattern
+is compared against each overlapping kept stem of its sound in turn. `null`
+sounds never collide.
 
 The passes file decides where each pattern begins relative to the common song
 anchor. `summary.js` stores each report's local shifted lead as `entry`, but
 `song_builder.py` recomputes placement from `start - passStart` across every
 pattern in every palette, using one global shift. Every pattern's assigned pass
 loop point lands at the same song time, the anchor; the pattern with the
-smallest lead starts at 0. There is no manual `starts` list, and adding
-`song.starts` to the spec is an error. Entries are seconds, not bars.
+smallest kept lead starts at 0, because overlap rating re-zeroes the entries and
+the anchor before anything is written. There is no manual `starts` list, and
+adding `song.starts` to the spec is an error. Entries are seconds, not bars.
 
 Add a `song` block for levels only (at the top level of the spec when the archive
 holds several palettes):
@@ -376,7 +393,8 @@ holds several palettes):
   stem at the entry that puts its loop anchor on the common anchor, and needs
   no common grid.
 - Song length is fixed by the patterns, not chosen: it is the furthest entry
-  time plus that pattern's whole region, across every palette.
+  time plus that pattern's whole region, across every palette, measured after
+  any leading trim.
 
 ```bash
 python3 song_builder.py --spec report-spec.json \
@@ -412,12 +430,14 @@ palette's.
 
 Guarantees:
 
-- every pattern of every palette is a stem unless an overlapping same-sound
-  repeat was dropped; no palette is skipped;
+- every pattern of every palette is a stem unless it lost an overlap rating to
+  a same-sound pattern; no palette is skipped;
 - every stem's assigned pass loop point lands at the same song anchor;
 - each stem is the whole measured region, once, from first sample to last,
   with no truncation, muting, gating or tiling; the only attenuation is a 4 ms
   anti-click ramp at each end of the region;
+- no leading silence survives a dropped pattern: entries and the anchor are
+  re-zeroed on the first kept pattern before anything is written;
 - stems are trimmed to their targets, then share one master scale;
 - the master is written as the exact sum of the quantized stems, so the stems
   reconstruct it sample for sample and the builder's sum check is 0 LSB;
@@ -426,7 +446,8 @@ Guarantees:
 - peak levels load as script tags, so `song.html` works from `file://`.
 
 The page plays the master or all stems in sync, seeks, mutes individual stems,
-and draws one arrangement row per stem. Drag horizontally on a row to zoom,
+and draws one arrangement row per stem, labelled with its pattern's length and
+the sound it was played with. Drag horizontally on a row to zoom,
 right-click to zoom out, Reset Zoom to return, and click to jump and play. Gray
 vertical guides mark the other pass loop points; a bold white line marks the
 shared song anchor on every row.
@@ -434,10 +455,11 @@ shared song anchor on every row.
 Song-level checks:
 
 - [ ] Builder exits 0; printed stem delta is 0 LSB; clipped is 0.
-- [ ] Stem count is the report pattern count minus same-sound repeats that
-      overlap an earlier stem; every palette still contributes.
+- [ ] Stem count is the report pattern count minus same-sound overlaps whose
+      pattern lost the rating; every palette still contributes.
 - [ ] Each stem's audio is exactly its pattern's measured region
-      (`segments × length`) once, beginning at its pass-derived entry.
+      (`segments × length`) once, beginning at its pass-derived entry, and the
+      earliest kept entry is 0.000 s.
 - [ ] All stem rows draw in `song.html`, silent before their entry.
 - [ ] A deep zoom loads a finer `a*.js` level and Reset Zoom restores the view.
 - [ ] Click-to-seek starts playback; mute toggles one stem.
@@ -653,6 +675,8 @@ its region.
 - If a preview host rejects plain curl with 403, that may be the preview's
   authentication layer, not a broken app. Check loopback and use the preview
   panel.
+- Overlapping same-sound patterns are settled by the song rating, not by report
+  order. Do not go back to keeping whichever came first.
 - A song may not repeat a pattern to fill time or gate one out of part of the
   song: that stops it being heard whole.
 - Keep the zip out of itself. Re-run the zip after adding a download link if
