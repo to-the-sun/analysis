@@ -425,6 +425,7 @@ static void print_wide_path(const wchar_t *path)
 }
 
 static int playlistMode, instrumentMode;
+static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
 static const wchar_t *playlistFolder;
@@ -1235,9 +1236,37 @@ static void add_sample(const wchar_t *path)
     free((void *)path);
 }
 
+static int drumSeed;
+static uint64_t drumState;
+
+static void seed_drums(int seed)
+{
+    if (!seed) seed = (int)(((unsigned)rand() << 16 ^ (unsigned)rand()) & 0x7fffffffu);
+    drumSeed = seed ? seed : 1;
+    drumState = (uint64_t)(unsigned)drumSeed;
+}
+
+/* A drum set is drawn from its own seed, so the seed in song.json draws the same set again. */
+static int drum_pick(const int *taste, int count)
+{
+    long long total = 0;
+    for (int i = 0; i < count; i++) total += taste[i];
+
+    drumState += 0x9e3779b97f4a7c15ull;
+    uint64_t bits = drumState;
+    bits = (bits ^ (bits >> 30)) * 0xbf58476d1ce4e5b9ull;
+    bits = (bits ^ (bits >> 27)) * 0x94d049bb133111ebull;
+    bits ^= bits >> 31;
+
+    long long ticket = (long long)((double)(bits >> 11) * (1.0 / 9007199254740992.0) * (double)total);
+    for (int i = 0; i < count; i++)
+        if ((ticket -= taste[i]) < 0) return i;
+    return count - 1;
+}
+
 static void assign_drums(void)
 {
-    for (int note = 0; note < 128; note++) drumNoteDrum[note] = weighted_pick(drumTaste, drumCount);
+    for (int note = 0; note < 128; note++) drumNoteDrum[note] = drum_pick(drumTaste, drumCount);
     memset(drumVoices, 0, sizeof drumVoices);
 }
 
@@ -1262,6 +1291,7 @@ static void load_drums(const char *folder)
 
     drumPeaks = calloc((size_t)drumCount, sizeof *drumPeaks);
     drumTasted = calloc((size_t)drumCount, 1);
+    seed_drums(0);
     assign_drums();
 }
 
@@ -2116,25 +2146,35 @@ static void new_vst_sound(void)
 
 #define SOUND_MAX 1024
 #define SOUND_NAME 128
+#define INSTRUMENT_MAX 64
 
 typedef struct {
     volatile LONG lock;
     volatile LONG count;
     char name[SOUND_MAX][SOUND_NAME];
+    int seed[SOUND_MAX];
+    volatile LONG instrumentCount;
+    char instrument[INSTRUMENT_MAX][MAX_PATH];
+    int last[INSTRUMENT_MAX];
 } SoundList;
 
 static HANDLE soundMapping;
 static SoundList *soundList;
+static int songReady, songLive;
+
+static void open_sounds(void)
+{
+    if (soundMapping) return;
+    soundMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SoundList),
+                                      "Local\\RestlessVirtuosoSounds");
+    soundList = soundMapping ? MapViewOfFile(soundMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SoundList)) : NULL;
+}
 
 /* One list for every running instance, so a number names the same sound in each take.
    Each shuffled drum set is a different sound, so those always get a new number. */
-static int sound_number(const char *name, int unique)
+static int sound_number(const char *name, int unique, int seed)
 {
-    if (!soundMapping) {
-        soundMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SoundList),
-                                          "Local\\RestlessVirtuosoSounds");
-        soundList = soundMapping ? MapViewOfFile(soundMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SoundList)) : NULL;
-    }
+    open_sounds();
     if (!soundList) return 0;
 
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
@@ -2146,12 +2186,255 @@ static int sound_number(const char *name, int unique)
     if (!number && count < SOUND_MAX) {
         strncpy(soundList->name[count], name, SOUND_NAME - 1);
         soundList->name[count][SOUND_NAME - 1] = 0;
+        soundList->seed[count] = seed;
         number = count + 1;
         soundList->count = count + 1;
     }
 
     InterlockedExchange(&soundList->lock, 0);
     return number;
+}
+
+/* An instrument is named by its MIDI input, the same identity its settings file has. */
+static int instrument_slot(const char *name, int create)
+{
+    open_sounds();
+    if (!soundList || !name[0]) return -1;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->instrumentCount, slot = -1;
+    for (int i = 0; i < count; i++)
+        if (!_stricmp(soundList->instrument[i], name)) { slot = i; break; }
+
+    if (slot < 0 && create && count < INSTRUMENT_MAX) {
+        strncpy(soundList->instrument[count], name, MAX_PATH - 1);
+        soundList->instrument[count][MAX_PATH - 1] = 0;
+        soundList->last[count] = 0;
+        slot = count;
+        soundList->instrumentCount = count + 1;
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+    return slot;
+}
+
+static int last_sound_number(void)
+{
+    int slot = instrumentMode && instrumentName ? instrument_slot(instrumentName, 0) : -1;
+    return slot >= 0 ? soundList->last[slot] : 0;
+}
+
+static void remember_sound(int number)
+{
+    int slot = instrumentMode && instrumentName ? instrument_slot(instrumentName, 1) : -1;
+    if (slot >= 0) soundList->last[slot] = number;
+}
+
+static int song_path(wchar_t *out, size_t size)
+{
+    size_t length = playlistFolder ? wcslen(playlistFolder) : 0;
+    while (length > 3 && (playlistFolder[length - 1] == L'\\' || playlistFolder[length - 1] == L'/')) length--;
+    if (!length || length + 11 > size) return -1;
+
+    wmemcpy(out, playlistFolder, length);
+    wcscpy(out + length, L"\\song.json");
+    return 0;
+}
+
+static const char *song_field(const char *at, char *key, size_t size)
+{
+    at = json_text(skip_space(at), key, size);
+    if (!at) return NULL;
+
+    at = skip_space(at);
+    if (*at++ != ':') return NULL;
+    return skip_space(at);
+}
+
+static int load_song_sounds(const char *array, char **names, int **seeds)
+{
+    const char *at = skip_space(array);
+    if (*at++ != '[') return 0;
+
+    int count = 0;
+    for (;;) {
+        at = skip_space(at);
+        if (*at == ']' || !*at) break;
+        if (*at++ != '{') break;
+
+        char name[SOUND_NAME] = "";
+        int seed = 0;
+        for (;;) {
+            char key[16];
+            at = song_field(at, key, sizeof key);
+            if (!at) return count;
+
+            if (!strcmp(key, "name")) {
+                at = json_text(at, name, sizeof name);
+                if (!at) return count;
+            } else if (!strcmp(key, "seed")) {
+                char *end;
+                seed = (int)strtol(at, &end, 10);
+                if (end == at) return count;
+                at = end;
+            } else return count;
+
+            at = skip_space(at);
+            if (*at == ',') { at++; continue; }
+            if (*at++ != '}') return count;
+            break;
+        }
+
+        if (!name[0]) return count;
+        char *grownNames = realloc(*names, (size_t)(count + 1) * SOUND_NAME);
+        if (!grownNames) return count;
+        *names = grownNames;
+        int *grownSeeds = realloc(*seeds, (size_t)(count + 1) * sizeof *grownSeeds);
+        if (!grownSeeds) return count;
+        *seeds = grownSeeds;
+        memcpy(*names + (size_t)count * SOUND_NAME, name, SOUND_NAME);
+        (*seeds)[count++] = seed;
+
+        at = skip_space(at);
+        if (*at == ',') { at++; continue; }
+        break;
+    }
+    return count;
+}
+
+static void load_song_instruments(const char *array)
+{
+    const char *at = skip_space(array);
+    if (*at++ != '[') return;
+
+    for (;;) {
+        at = skip_space(at);
+        if (*at == ']' || !*at) return;
+        if (*at++ != '{') return;
+
+        char instrument[MAX_PATH] = "";
+        int number = 0;
+        for (;;) {
+            char key[16];
+            at = song_field(at, key, sizeof key);
+            if (!at) return;
+
+            if (!strcmp(key, "instrument")) {
+                at = json_text(at, instrument, sizeof instrument);
+                if (!at) return;
+            } else if (!strcmp(key, "sound")) {
+                char *end;
+                number = (int)strtol(at, &end, 10);
+                if (end == at) return;
+                at = end;
+            } else return;
+
+            at = skip_space(at);
+            if (*at == ',') { at++; continue; }
+            if (*at++ != '}') return;
+            break;
+        }
+
+        if (instrument[0]) {
+            int slot = instrument_slot(instrument, 1);
+            if (slot >= 0) soundList->last[slot] = number;
+        }
+
+        at = skip_space(at);
+        if (*at != ',') return;
+        at++;
+    }
+}
+
+/* The stems instance reads the song it is resuming, so every instrument can take its
+   sound back and the numbers in the old sounds files keep naming the same sounds. */
+static void load_song(void)
+{
+    wchar_t path[1100];
+    if (song_path(path, sizeof path / sizeof *path) != 0) return;
+
+    open_sounds();
+    if (!soundList) return;
+
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) {
+        songReady = 1;
+        return;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *text = size > 0 ? malloc((size_t)size + 1) : NULL;
+    if (text) text[fread(text, 1, (size_t)size, file)] = 0;
+    fclose(file);
+    if (!text) return;
+
+    char *names = NULL;
+    int *seeds = NULL, count = 0;
+    const char *sounds = json_value(text, "sounds");
+    if (sounds && *sounds == '[') count = load_song_sounds(sounds, &names, &seeds);
+
+    if (!soundList->count) {
+        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
+    } else {
+        int aligned = count && (int)soundList->count == count;
+        for (int i = 0; aligned && i < count; i++)
+            if (strcmp(soundList->name[i], names + (size_t)i * SOUND_NAME)) aligned = 0;
+        if (!aligned) {
+            log_error("'%ls' does not match the sounds this session already has, so it was not loaded.\n", path);
+            goto done;
+        }
+    }
+
+    const char *instruments = json_value(text, "instruments");
+    if (instruments && *instruments == '[') load_song_instruments(instruments);
+    songReady = 1;
+
+done:
+    free(names);
+    free(seeds);
+    free(text);
+}
+
+static void save_song(void)
+{
+    wchar_t path[1100];
+    if (!songLive || !songReady || !soundList || song_path(path, sizeof path / sizeof *path) != 0) return;
+
+    FILE *file = _wfopen(path, L"wb");
+    if (!file) {
+        log_error("Could not write '%ls'.\n", path);
+        return;
+    }
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->count;
+    fputs("{\n  \"sounds\": [", file);
+    for (int i = 0; i < count; i++) {
+        fprintf(file, "%s\n    { \"name\": ", i ? "," : "");
+        json_write_text(file, soundList->name[i]);
+        if (soundList->seed[i]) fprintf(file, ", \"seed\": %d", soundList->seed[i]);
+        fputc('}', file);
+    }
+
+    int instruments = (int)soundList->instrumentCount;
+    fprintf(file, "%s],\n  \"instruments\": [", count ? "\n  " : "");
+    for (int i = 0; i < instruments; i++) {
+        fprintf(file, "%s\n    { \"instrument\": ", i ? "," : "");
+        json_write_text(file, soundList->instrument[i]);
+        fprintf(file, ", \"sound\": %d }", soundList->last[i]);
+    }
+    fprintf(file, "%s]\n}\n", instruments ? "\n  " : "");
+
+    InterlockedExchange(&soundList->lock, 0);
+
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) log_error("Could not write '%ls'.\n", path);
+    else log_trace("wrote %ls\n", path);
 }
 
 static void sound_name(char *out, size_t size)
@@ -2171,6 +2454,89 @@ static void sound_name(char *out, size_t size)
     }
 }
 
+static int find_vst_library(const char *name)
+{
+    for (int i = 0; i < vstLibraryCount; i++) {
+        size_t length = strlen(vstNames[i]);
+        if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
+        if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
+    }
+
+    for (int i = 0; i < vstLibraryCount; i++) {
+        AEffect *effect = create_effect(vstLibraries[i]);
+        if (!effect || !effect->dispatcher) continue;
+
+        char effectName[VST_NAME];
+        effect_name(effect, effectName, sizeof effectName);
+        effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+        if (effectName[0] && !_stricmp(effectName, name)) return i;
+    }
+    return -1;
+}
+
+static int restore_sound(int number)
+{
+    open_sounds();
+    if (!soundList || number < 1 || number > soundList->count) return -1;
+
+    char name[SOUND_NAME];
+    memcpy(name, soundList->name[number - 1], SOUND_NAME);
+    name[SOUND_NAME - 1] = 0;
+
+    if (strstr(name, " drum samples")) {
+        if (!drumCount) return -1;
+        seed_drums(soundList->seed[number - 1]);
+        g.samplesSound = 1;
+        assign_drums();
+        g.soundNumber = number;
+        return 0;
+    }
+
+    if (strncmp(name, "VST ", 4)) return -1;
+    const char *comma = strstr(name + 4, ", ");
+    if (!comma || (size_t)(comma - name - 4) >= VST_NAME) return -1;
+
+    char plugin[VST_NAME];
+    size_t length = (size_t)(comma - name - 4);
+    memcpy(plugin, name + 4, length);
+    plugin[length] = 0;
+
+    int preset = 0, octave = 0;
+    const char *field = strstr(name, ", preset ");
+    if (field) sscanf(field, ", preset %d", &preset);
+    field = strstr(name, ", octave ");
+    if (field) sscanf(field, ", octave %d", &octave);
+
+    int library = find_vst_library(plugin);
+    if (library < 0) {
+        log_error("The sound '%s' needs a plugin that is not loaded.\n", name);
+        return -1;
+    }
+    if (preset < 1 || preset > vstLibraryPresets[library]) preset = 0;
+
+    int restart = g.started;
+    if (restart) {
+        g.asio->vtable->stop(g.asio);
+        g.started = 0;
+    }
+    close_vst_effect();
+    if (start_vst(library, preset - 1) != 0) log_error("Could not start the plugin for the sound '%s'.\n", name);
+    else {
+        vstOctave = octave;
+        g.samplesSound = 0;
+        g.soundNumber = number;
+    }
+
+    if (restart) {
+        if (g.asio->vtable->start(g.asio) == ASE_OK) g.started = 1;
+        else {
+            log_error("ASIOStart failed after restoring a sound.\n");
+            InterlockedExchange(&g.quit, 1);
+        }
+    }
+    return g.soundNumber == number ? 0 : -1;
+}
+
 /* Overwrites the meters line in place, so a message leaves no blank line behind it. */
 static void console_line(const char *text)
 {
@@ -2183,20 +2549,45 @@ static void print_sound(const char *prefix)
 {
     char name[160], line[192];
     sound_name(name, sizeof name);
-    g.soundNumber = 0;
     if (!name[0]) return;
 
-    g.soundNumber = sound_number(name, g.samplesSound);
+    if (!g.soundNumber)
+        g.soundNumber = sound_number(name, g.samplesSound, g.samplesSound ? drumSeed : 0);
+    remember_sound(g.soundNumber);
+
     snprintf(line, sizeof line, "  %s%d: %s", prefix, g.soundNumber, name);
     console_line(line);
     log_trace("sound %d: %s\n", g.soundNumber, name);
 }
 
+/* A stems instance that loads a song sets every instrument's last sound, so an
+   instance that was already running takes its sound on too. */
+static void follow_song_sound(void)
+{
+    static int failed;
+
+    int number = last_sound_number();
+    if (!number || number == g.soundNumber || number == failed) return;
+    if (restore_sound(number) != 0) {
+        failed = number;
+        return;
+    }
+
+    failed = 0;
+    print_sound("sound ");
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+}
+
 static void new_sound(void)
 {
+    g.soundNumber = 0;
     choose_sound(g.samplesRatio);
-    if (g.samplesSound) assign_drums();
-    else new_vst_sound();
+    if (g.samplesSound) {
+        seed_drums(0);
+        assign_drums();
+    } else new_vst_sound();
 
     print_sound("new sound ");
     LARGE_INTEGER now;
@@ -2961,6 +3352,7 @@ static void shutdown_monitor(void)
         g.asio = NULL;
     }
     if (settingsPath) save_settings(settingsPath, settingsOptions);
+    if (playlistMode) save_song();
     take_finish();
     clear_loop_cue();
     if (deviceEnumerator) {
@@ -3216,6 +3608,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
                 return 1;
             }
             instrumentMode = 1;
+            instrumentName = options.instrument;
             g.synthEnabled = 0;
             g.midiChannel = options.inputChannel;
             if (!options.midiIn) options.midiIn = options.instrument;
@@ -3297,11 +3690,15 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (setup_rate(options.rate) != 0) goto done;
     if (setup_buffer(options.buffer) != 0) goto done;
+    if (playlistMode) load_song();
     if (instrumentMode) {
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
-        choose_sound(options.samplesRatio);
-        if (!g.samplesSound) start_drawn_vst();
+        int previous = last_sound_number();
+        if (!previous || restore_sound(previous) != 0) {
+            choose_sound(options.samplesRatio);
+            if (!g.samplesSound) start_drawn_vst();
+        }
     }
     log_trace("rate and buffer set\n");
     if (create_buffers() != 0) goto done;
@@ -3345,7 +3742,10 @@ static int run(int argc, char **argv, const wchar_t *folder)
         goto done;
     }
     g.started = 1;
-    if (playlistMode) send_loop_start();
+    if (playlistMode) {
+        songLive = 1;
+        send_loop_start();
+    }
     log_trace("started\n");
 
     init_console_input();
@@ -3390,6 +3790,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         take_flush();
 
         read_console_input();
+        follow_song_sound();
 
         ULONGLONG now = GetTickCount64();
         if (now - lastDraw >= 100) {

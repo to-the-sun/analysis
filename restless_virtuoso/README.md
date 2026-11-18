@@ -140,6 +140,13 @@ sounds, so a number identifies a drum sample set or VST preset in every take, an
 console prints the number with the description. A take with no sound applied holds
 the single line `0, 0.000000 other;`.
 
+When the stems instance exits it writes `song.json` beside `[palettes]`, holding every
+shared sound in its numbered order and the number of the sound each instrument was last
+on. A stems instance started on a folder with a `song.json` registers those sounds in
+the same order and sets every instrument to its saved sound: instances that are already
+running take it on, and instances started later begin on it. A drum sound keeps the seed
+that draws its sample set, so it comes back the same.
+
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
 
