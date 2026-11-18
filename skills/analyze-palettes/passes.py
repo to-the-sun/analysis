@@ -6,7 +6,9 @@ the audio. As in analyze.c, a pattern is assigned to the pass it overlaps most,
 and its lead-in is the pattern start minus that pass's loop point plus the pad.
 
 A sounds file, when present, holds one line per sound change,
-``index, milliseconds number;``, where number names a drum set or VST preset.
+``index, milliseconds number mode;``, where number names a drum set or VST
+preset and mode is ``samples`` or ``synth``. A line with no number,
+``index, milliseconds other;``, marks a device that applies no sound.
 """
 import os
 
@@ -92,24 +94,25 @@ def parse_sounds(path):
             if len(parts) < 3:
                 continue
             try:
-                marks.append({
-                    'index': int(parts[0]),
-                    'time': float(parts[1]) / 1000.0,
-                    'number': int(parts[2]),
-                })
+                index, time = int(parts[0]), float(parts[1]) / 1000.0
             except ValueError:
                 continue
+            try:
+                number, mode = int(parts[2]), (parts[3].lower() if len(parts) > 3 else 'synth')
+            except ValueError:
+                number, mode = None, parts[2].lower()
+            marks.append({'index': index, 'time': time, 'number': number, 'mode': mode})
     marks.sort(key=lambda m: (m['time'], m['index']))
     return marks
 
 
-def dominant_sound(start, end, marks, duration):
+def dominant_mark(start, end, marks, duration):
     best, overlap = None, 0.0
     for i, mark in enumerate(marks):
         begin = max(start, mark['time'])
         finish = min(end, marks[i + 1]['time'] if i + 1 < len(marks) else duration)
         if finish - begin > overlap:
-            best, overlap = mark['number'], finish - begin
+            best, overlap = mark, finish - begin
     return best
 
 

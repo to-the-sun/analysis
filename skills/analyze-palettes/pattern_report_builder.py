@@ -928,6 +928,7 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
         if not segments:
             raise ValueError('Pattern %d has no full %.3f s segment in %.3f-%.3f'
                              % (i + 1, length, start, end))
+        mark = passes.dominant_mark(start, end, sounds, duration)
         patterns.append({
             'id': i,
             'name': name,
@@ -939,7 +940,8 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
             'pass': span['index'],
             'passStart': round(span['loop'], 3),
             'passLead': round(lead, 6),
-            'sound': passes.dominant_sound(start, end, sounds, duration),
+            'sound': mark['number'] if mark else None,
+            'mode': mark['mode'] if mark else None,
             'segments': segments,
         })
 
@@ -974,9 +976,11 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
                 marks = ([active[-1]] if active else []) + \
                         [m for m in sounds if p['start'] < m['time'] < p['end']]
                 for mark in marks:
-                    f.write('%d, %.6f %d;\n' % (
+                    value = mark['mode'] if mark['number'] is None else \
+                        '%d %s' % (mark['number'], mark['mode'])
+                    f.write('%d, %.6f %s;\n' % (
                         index, (seam / sr + max(0.0, mark['time'] - p['start'])) * 1000.0,
-                        mark['number']))
+                        value))
                     index += 1
 
     inter_coarse, coarse_bins = minmax_bins(pcm, COARSE_STEP)
