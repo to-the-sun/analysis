@@ -1235,6 +1235,7 @@ static void add_sample(const wchar_t *path)
 static void assign_drums(void)
 {
     for (int note = 0; note < 128; note++) drumNoteDrum[note] = weighted_pick(drumTaste, drumCount);
+    memset(drumVoices, 0, sizeof drumVoices);
 }
 
 static void load_drums(const char *folder)
