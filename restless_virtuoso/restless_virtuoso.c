@@ -2560,6 +2560,17 @@ static void print_sound(const char *prefix)
     log_trace("sound %d: %s\n", g.soundNumber, name);
 }
 
+static int take_sound(int number)
+{
+    if (restore_sound(number) != 0) return -1;
+
+    print_sound("sound ");
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+    return 0;
+}
+
 /* A stems instance that loads a song sets every instrument's last sound, so an
    instance that was already running takes its sound on too. */
 static void follow_song_sound(void)
@@ -2568,16 +2579,7 @@ static void follow_song_sound(void)
 
     int number = last_sound_number();
     if (!number || number == g.soundNumber || number == failed) return;
-    if (restore_sound(number) != 0) {
-        failed = number;
-        return;
-    }
-
-    failed = 0;
-    print_sound("sound ");
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+    failed = take_sound(number) == 0 ? 0 : number;
 }
 
 static void new_sound(void)
@@ -2593,6 +2595,14 @@ static void new_sound(void)
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+}
+
+/* The console's clicks walk the shared sounds, and a click past the highest draws a new one. */
+static void step_sound(int step)
+{
+    if (step > 0 && g.soundNumber >= 1 && g.soundNumber < (int)soundList->count) take_sound(g.soundNumber + 1);
+    else if (step < 0 && g.soundNumber > 1) take_sound(g.soundNumber - 1);
+    else if (step > 0) new_sound();
 }
 
 static void close_vst(void)
@@ -3291,7 +3301,9 @@ static void read_console_input(void)
         for (DWORD i = 0; i < read; i++) {
             if (records[i].EventType != MOUSE_EVENT || !instrumentMode) continue;
             MOUSE_EVENT_RECORD *mouse = &records[i].Event.MouseEvent;
-            if (!mouse->dwEventFlags && (mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED)) new_sound();
+            if (mouse->dwEventFlags) continue;
+            if (mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED) step_sound(1);
+            else if (mouse->dwButtonState & RIGHTMOST_BUTTON_PRESSED) step_sound(-1);
         }
     }
 }

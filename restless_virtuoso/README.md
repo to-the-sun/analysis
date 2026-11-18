@@ -150,8 +150,10 @@ that draws its sample set, so it comes back the same.
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
 
-In instrument mode, click anywhere in the console for another random sound, drawn
-from `samples_path` or `vsts_path` by `samples_ratio`.
+In instrument mode, left-click anywhere in the console to move up to the next shared
+sound, or to draw a new one when it is already on the highest, and right-click to move
+back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
+`samples_ratio`.
 
 ## Notes
 
