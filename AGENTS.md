@@ -31,6 +31,7 @@ Use markdown.
 
 ## Git workflow: always use a pull request
 
+- Agents must begin their work **pulling from `main` only**. Other branches may be open, but these are not for an agent to work from. The only other branches the agent should work on are those it opens itself to submit new commits. 
 - Never commit directly to `main`.
 - For each change, create a new branch, commit there, push the branch, and give
   the user a GitHub link to open the pull request.
