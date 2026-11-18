@@ -20,7 +20,6 @@
 
 #include "asio_abi.h"
 #include "dsp.h"
-#include "cumulative_transience.h"
 #include "vst_abi.h"
 #define DR_WAV_IMPLEMENTATION
 #include "../analysis/dr_wav.h"
@@ -37,8 +36,6 @@
 #define DEFAULT_DRIVER "Focusrite USB ASIO"
 #define TASTE_START 1
 #define TASTE_GATE 0.001f
-#define ANALYSIS_WINDOW_MS 15000
-#define ANALYSIS_BANDS 4
 
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
@@ -2274,110 +2271,6 @@ static float read_master_volume(void)
     return volume;
 }
 
-/* The callback only appends the mix to this ring; a background thread analyzes it, so
-   the ASIO thread never does the transform work. */
-#define ANALYSIS_RING 262144
-
-static TransientAnalyzer *analysisAnalyzer;
-static float *analysisRing;
-static volatile LONG analysisWrite, analysisRead;
-static HANDLE analysisThread;
-
-static void analysis_push(const float *samples, int frames)
-{
-    if (!analysisRing) return;
-
-    LONG write = analysisWrite, read = analysisRead;
-    for (int i = 0; i < frames; i++) {
-        LONG next = write + 1 == ANALYSIS_RING ? 0 : write + 1;
-        if (next == read) break;
-        analysisRing[write] = samples[i];
-        write = next;
-    }
-    analysisWrite = write;
-}
-
-static int analysis_take(float *out, int count)
-{
-    LONG read = analysisRead, write = analysisWrite;
-    int available = (int)((write - read + ANALYSIS_RING) % ANALYSIS_RING);
-    if (available < count) return 0;
-
-    for (int i = 0; i < count; i++) {
-        out[i] = analysisRing[read];
-        if (++read == ANALYSIS_RING) read = 0;
-    }
-    analysisRead = read;
-    return 1;
-}
-
-static DWORD WINAPI analysis_thread(LPVOID unused)
-{
-    (void)unused;
-    ChunkAnalysisResult *chunk = malloc(sizeof *chunk);
-    float *pushed = NULL;
-    int rate = 0, step = 0, hop = 1;
-    long long total = 0;
-
-    while (!g.quit) {
-        int sr = (int)g.rate;
-        if (sr != rate) {
-            rate = sr;
-            step = (int)(sr * 0.1);
-            hop = (int)(sr * 0.001);
-            if (hop < 1) hop = 1;
-            free(pushed);
-            pushed = step > 0 ? calloc((size_t)step, sizeof *pushed) : NULL;
-            if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
-            analysisAnalyzer = sr > 0 ? analyzer_create(1.0, NULL, NULL, NULL, NULL, ANALYSIS_WINDOW_MS, ANALYSIS_BANDS) : NULL;
-            if (analysisAnalyzer) analyzer_set_sample_rate(analysisAnalyzer, sr);
-            total = 0;
-            analysisRead = analysisWrite = 0;
-        }
-        if (!analysisAnalyzer || !pushed || !chunk || !analysis_take(pushed, step)) {
-            Sleep(10);
-            continue;
-        }
-
-        int act = (int)(total - rate * 0.2);
-        int win = act - (int)(rate * (ANALYSIS_WINDOW_MS / 1000.0));
-        if (win < 0) win = 0;
-        analyzer_analyze_chunk(analysisAnalyzer, pushed, step, rate, win / hop, act / hop, chunk);
-        total += step;
-
-        for (int i = 0; i < chunk->peak_list.num_peaks; i++) {
-            PeakResult *peak = &chunk->peak_list.peaks[i];
-            char line[96];
-            snprintf(line, sizeof line, "  band %d  %9.1f ms  score %.6f", peak->band_idx, peak->time * 1000.0, peak->total_score);
-            console_line(line);
-        }
-    }
-
-    if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
-    analysisAnalyzer = NULL;
-    free(pushed);
-    free(chunk);
-    return 0;
-}
-
-static void analysis_start(void)
-{
-    analysisRing = calloc(ANALYSIS_RING, sizeof *analysisRing);
-    if (analysisRing) analysisThread = CreateThread(NULL, 8 << 20, analysis_thread, NULL, 0, NULL);
-}
-
-static void analysis_stop(void)
-{
-    if (analysisThread) {
-        InterlockedExchange(&g.quit, 1);
-        WaitForSingleObject(analysisThread, 3000);
-        CloseHandle(analysisThread);
-        analysisThread = NULL;
-    }
-    free(analysisRing);
-    analysisRing = NULL;
-}
-
 static void process_buffer(int32_t index)
 {
     const int frames = (int)g.bufferSize;
@@ -2424,7 +2317,6 @@ static void process_buffer(int32_t index)
         sample_from_float(g.mixFloats, output, g.outFormat[j], frames);
         if (take.active) take_mix(g.mixFloats, frames);
     }
-    analysis_push(g.mixFloats, frames);
 
     if (take.active) {
         take.last->frames += (size_t)frames;
@@ -3457,7 +3349,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     log_trace("started\n");
 
     init_console_input();
-    analysis_start();
 
     ULONGLONG lastDraw = 0;
     while (!g.quit) {
@@ -3512,9 +3403,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     exitCode = 0;
 
 done:
-    /* shutdown_monitor stops the driver, so no audio callback can reach the ring. */
     shutdown_monitor();
-    analysis_stop();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
     printf("\n");
