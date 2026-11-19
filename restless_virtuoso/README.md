@@ -88,8 +88,9 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   }
   ```
 
-  Entries are named by their `.dll` file name or the plugin's own name,
-  case-insensitive. `presets` is how many presets the plugin actually has, and
+  Each plugin's range is printed as it loads, and a plugin with no entry is named in a
+  warning and left at 0-127. Entries are named by their `.dll` file name or the
+  plugin's own name, case-insensitive. `presets` is how many presets the plugin actually has, and
   random presets are drawn from it instead of the count the plugin reports. `range`
   is the MIDI notes the plugin handles: notes outside it wrap around into it. Every
   `new sound` on a VST also shifts all its notes by a random -6 to +6 octaves before

@@ -2765,6 +2765,11 @@ static void init_vst_taste(int library)
     vstLibraryLow[library] = stats ? stats->low : 0;
     vstLibraryHigh[library] = stats ? stats->high : 127;
 
+    char line[192];
+    if (stats) snprintf(line, sizeof line, "  %s: range %d-%d", vstNames[library], stats->low, stats->high);
+    else snprintf(line, sizeof line, "  warning: no stats entry for %s, range 0-127", vstNames[library]);
+    console_line(line);
+
     int count = vstLibraryPresets[library];
     if (count <= 0) return;
 
