@@ -2231,14 +2231,21 @@ static void remember_sound(int number)
     if (slot >= 0) soundList->last[slot] = number;
 }
 
+/* song.json sits beside [palettes], one folder above the stems folder. An instrument
+   takes the folder from the cue the stems instance publishes. */
 static int song_path(wchar_t *out, size_t size)
 {
-    size_t length = playlistFolder ? wcslen(playlistFolder) : 0;
-    while (length > 3 && (playlistFolder[length - 1] == L'\\' || playlistFolder[length - 1] == L'/')) length--;
-    if (!length || length + 11 > size) return -1;
+    open_cue();
+    const wchar_t *from = playlistMode ? playlistFolder : cue && cue->folder[0] ? cue->folder : NULL;
+    if (!from) return -1;
 
-    wmemcpy(out, playlistFolder, length);
-    wcscpy(out + length, L"\\song.json");
+    size_t length = wcslen(from);
+    while (length > 3 && (from[length - 1] == L'\\' || from[length - 1] == L'/')) length--;
+    while (length > 3 && from[length - 1] != L'\\' && from[length - 1] != L'/') length--;
+    if (length <= 3 || length + 10 > size) return -1;
+
+    wmemcpy(out, from, length);
+    wcscpy(out + length, L"song.json");
     return 0;
 }
 
@@ -2252,41 +2259,36 @@ static const char *song_field(const char *at, char *key, size_t size)
     return skip_space(at);
 }
 
-static int load_song_sounds(const char *array, char **names, int **seeds)
+/* The sounds are keyed by their number and written in that order, so a number names the
+   same sound in every take. A drum sound carries the seed that draws its set. */
+static int load_song_sounds(const char *object, char **names, int **seeds)
 {
-    const char *at = skip_space(array);
-    if (*at++ != '[') return 0;
+    const char *at = skip_space(object);
+    if (*at++ != '{') return 0;
 
     int count = 0;
     for (;;) {
+        char key[16];
         at = skip_space(at);
-        if (*at == ']' || !*at) break;
-        if (*at++ != '{') break;
+        if (*at == '}' || !*at) break;
+
+        at = json_text(at, key, sizeof key);
+        if (!at) return count;
+
+        at = skip_space(at);
+        if (*at++ != ':') return count;
 
         char name[SOUND_NAME] = "";
+        at = json_text(skip_space(at), name, sizeof name);
+        if (!at || !name[0]) return count;
+
         int seed = 0;
-        for (;;) {
-            char key[16];
-            at = song_field(at, key, sizeof key);
-            if (!at) return count;
-
-            if (!strcmp(key, "name")) {
-                at = json_text(at, name, sizeof name);
-                if (!at) return count;
-            } else if (!strcmp(key, "seed")) {
-                char *end;
-                seed = (int)strtol(at, &end, 10);
-                if (end == at) return count;
-                at = end;
-            } else return count;
-
-            at = skip_space(at);
-            if (*at == ',') { at++; continue; }
-            if (*at++ != '}') return count;
-            break;
+        const char *mark = strstr(name, ", seed ");
+        if (mark) {
+            seed = (int)strtol(mark + 7, NULL, 10);
+            name[mark - name] = 0;
         }
 
-        if (!name[0]) return count;
         char *grownNames = realloc(*names, (size_t)(count + 1) * SOUND_NAME);
         if (!grownNames) return count;
         *names = grownNames;
@@ -2338,7 +2340,7 @@ static void load_song_instruments(const char *array)
 
         if (instrument[0]) {
             int slot = instrument_slot(instrument, 1);
-            if (slot >= 0) soundList->last[slot] = number;
+            if (slot >= 0 && !soundList->last[slot]) soundList->last[slot] = number;
         }
 
         at = skip_space(at);
@@ -2374,12 +2376,12 @@ static void load_song(void)
     char *names = NULL;
     int *seeds = NULL, count = 0;
     const char *sounds = json_value(text, "sounds");
-    if (sounds && *sounds == '[') count = load_song_sounds(sounds, &names, &seeds);
+    if (sounds && *sounds == '{') count = load_song_sounds(sounds, &names, &seeds);
 
     if (!soundList->count) {
         for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
     } else {
-        int aligned = count && (int)soundList->count == count;
+        int aligned = count && (int)soundList->count >= count;
         for (int i = 0; aligned && i < count; i++)
             if (strcmp(soundList->name[i], names + (size_t)i * SOUND_NAME)) aligned = 0;
         if (!aligned) {
@@ -2401,6 +2403,7 @@ done:
 static void save_song(void)
 {
     wchar_t path[1100];
+    open_sounds();
     if (!songLive || !songReady || !soundList || song_path(path, sizeof path / sizeof *path) != 0) return;
 
     FILE *file = _wfopen(path, L"wb");
@@ -2412,16 +2415,16 @@ static void save_song(void)
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
 
     int count = (int)soundList->count;
-    fputs("{\n  \"sounds\": [", file);
+    fputs("{\n  \"sounds\": {", file);
     for (int i = 0; i < count; i++) {
-        fprintf(file, "%s\n    { \"name\": ", i ? "," : "");
-        json_write_text(file, soundList->name[i]);
-        if (soundList->seed[i]) fprintf(file, ", \"seed\": %d", soundList->seed[i]);
-        fputc('}', file);
+        fprintf(file, "%s\n    \"%d\": ", i ? "," : "", i + 1);
+        char entry[SOUND_NAME + 24];
+        snprintf(entry, sizeof entry, "%s, seed %d", soundList->name[i], (int)soundList->seed[i]);
+        json_write_text(file, soundList->seed[i] ? entry : soundList->name[i]);
     }
 
     int instruments = (int)soundList->instrumentCount;
-    fprintf(file, "%s],\n  \"instruments\": [", count ? "\n  " : "");
+    fprintf(file, "%s},\n  \"instruments\": [", count ? "\n  " : "");
     for (int i = 0; i < instruments; i++) {
         fprintf(file, "%s\n    { \"instrument\": ", i ? "," : "");
         json_write_text(file, soundList->instrument[i]);
@@ -2429,12 +2432,23 @@ static void save_song(void)
     }
     fprintf(file, "%s]\n}\n", instruments ? "\n  " : "");
 
-    InterlockedExchange(&soundList->lock, 0);
-
     int failed = ferror(file);
     fclose(file);
+    InterlockedExchange(&soundList->lock, 0);
     if (failed) log_error("Could not write '%ls'.\n", path);
     else log_trace("wrote %ls\n", path);
+}
+
+/* An instrument that is already running when a stems instance starts, or that starts
+   while one plays, takes the song's sounds on as soon as its folder is known. */
+static void sync_song(void)
+{
+    static wchar_t tried[1100];
+    wchar_t path[1100];
+
+    if (songReady || song_path(path, sizeof path / sizeof *path) != 0 || !wcscmp(tried, path)) return;
+    wcscpy(tried, path);
+    load_song();
 }
 
 static void sound_name(char *out, size_t size)
@@ -2554,6 +2568,7 @@ static void print_sound(const char *prefix)
     if (!g.soundNumber)
         g.soundNumber = sound_number(name, g.samplesSound, g.samplesSound ? drumSeed : 0);
     remember_sound(g.soundNumber);
+    save_song();
 
     snprintf(line, sizeof line, "  %s%d: %s", prefix, g.soundNumber, name);
     console_line(line);
@@ -3702,7 +3717,8 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (setup_rate(options.rate) != 0) goto done;
     if (setup_buffer(options.buffer) != 0) goto done;
-    if (playlistMode) load_song();
+    open_cue();
+    if (playlistMode || instrumentMode) load_song();
     if (instrumentMode) {
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
@@ -3742,7 +3758,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     }
 
     if (playlistMode) publish_palette(playlistFolder);
-    open_cue();
     take_join();
     if (instrumentMode) {
         LARGE_INTEGER at;
@@ -3754,10 +3769,8 @@ static int run(int argc, char **argv, const wchar_t *folder)
         goto done;
     }
     g.started = 1;
-    if (playlistMode) {
-        songLive = 1;
-        send_loop_start();
-    }
+    songLive = 1;
+    if (playlistMode) send_loop_start();
     log_trace("started\n");
 
     init_console_input();
@@ -3802,6 +3815,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         take_flush();
 
         read_console_input();
+        sync_song();
         follow_song_sound();
 
         ULONGLONG now = GetTickCount64();
