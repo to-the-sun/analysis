@@ -1727,8 +1727,8 @@ static void recording_name(wchar_t *out, size_t size)
 }
 
 /* A stem is one voice of the sound its name starts with, and voices collide by mode:
-   every drum sample set with every other, every soundless take with every other, and a
-   VST preset only with the same sound number. Two that collide cannot overlap in the
+   every drum sample set with every other, a VST preset only with the same sound
+   number, and a soundless take only with itself. Two that collide cannot overlap in the
    song, so a new take deletes the one it replaces. */
 
 enum { MODE_OTHER, MODE_SAMPLES, MODE_SYNTH };
@@ -1754,7 +1754,7 @@ static int stem_mode(const wchar_t *path)
 static int stems_collide(const wchar_t *a, const wchar_t *b)
 {
     int mode = stem_mode(a);
-    if (mode != stem_mode(b)) return 0;
+    if (mode != stem_mode(b) || mode == MODE_OTHER) return 0;
     if (mode != MODE_SYNTH) return 1;
 
     wchar_t keyA[16], keyB[16];
@@ -3394,7 +3394,8 @@ static int sound_mode(int number)
     return MODE_OTHER;
 }
 
-/* Whether a running instrument instance is playing a sound this stem collides with. */
+/* Whether a running instrument instance is playing a sound this stem collides with. An
+   instance with no sound collides only with itself, so it mutes nothing. */
 static int stem_muted(const wchar_t *file)
 {
     open_sounds();
@@ -3403,6 +3404,7 @@ static int stem_muted(const wchar_t *file)
     wchar_t key[16];
     stem_key(file, key, 16);
     int number = _wtoi(key), mode = sound_mode(number);
+    if (mode == MODE_OTHER) return 0;
 
     ULONGLONG now = GetTickCount64();
     for (int i = 0; i < (int)soundList->instrumentCount; i++) {
