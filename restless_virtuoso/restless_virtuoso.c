@@ -1145,7 +1145,7 @@ static float *ratingFeed;
 static int ratingFeedSize, ratingHead, ratingTail, ratingCount;
 static int ratingSound, ratingStarted;
 
-static volatile LONG ratingRequest;
+static volatile LONG ratingRequest, ratingLoop;
 static int ratingRequestMode;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems;
@@ -1373,6 +1373,11 @@ static DWORD WINAPI rating_worker(void *unused)
             applied = request;
             filled = 0;
             pushed = 0;
+        }
+
+        if (InterlockedExchange(&ratingLoop, 0)) {
+            ratingStepCount = ratingCount = 0;
+            ratingSum = ratingValue = ratingBurst = 0.0;
         }
 
         int current = (int)g.rate;
@@ -1936,6 +1941,7 @@ static void advance_tracks(void)
     }
     send_loop_start();
     InterlockedExchange(&playlistRefresh, 1);
+    InterlockedExchange(&ratingLoop, 1);
 }
 
 static void render_playlist(float *dst, int outputs, int frames)
@@ -1999,6 +2005,12 @@ static void refresh_playlist(void)
         stems[i].frames = 0;
         stems[i].position = 0;
         stems[i].fraction = 0.0;
+
+        const wchar_t *base = wcsrchr(stemFiles[i], L'\\');
+        char name[128], line[192];
+        WideCharToMultiByte(CP_ACP, 0, base ? base + 1 : stemFiles[i], -1, name, sizeof name, NULL, NULL);
+        snprintf(line, sizeof line, "  dropped %s, %d stems playing", name, playlist_stems());
+        console_line(line);
         log_trace("dropped %ls\n", stemFiles[i]);
         stemFiles[i] = NULL;
         changed = 1;

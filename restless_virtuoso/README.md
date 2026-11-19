@@ -200,7 +200,7 @@ length.
 A WAV dropped into a folder that a stems instance is playing joins the others at the
 next loop point, aligned with them rather than at the top of the song, and the console
 prints its name and how many stems are playing. A stem whose file has gone stops
-playing at that point.
+playing at that point and is named the same way, as `dropped`.
 
 Stems of the same sound never overlap in the song, as in the song builder: a take whose
 active audio overlaps an older take of the same sound deletes that file, and the stems
