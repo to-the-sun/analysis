@@ -117,7 +117,9 @@ def palette_tag(basename):
 def stem_meta(p):
     meta = '%d bars &middot; %.3f s' % (len(p['segments']) * p['bars'],
                                        p['length'] * len(p['segments']))
-    return meta + (' &middot; sound %s' % p['sound'] if p.get('sound') else '')
+    mark = ' '.join(str(v) for v in (p.get('sound'), p.get('mode')) if v is not None)
+    return meta + (' &middot; sound %s' % mark if p.get('sound') else
+                   ' &middot; %s' % mark if mark else '')
 
 
 def sound_class(base, p):

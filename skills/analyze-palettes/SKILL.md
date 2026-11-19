@@ -84,10 +84,11 @@ across patterns or across the file. Measure each region on its own terms.
 
    A `sounds_<stamp>.txt` beside the palette is optional. It holds one
    `index, milliseconds number mode;` line per sound change, where `mode` is
-   `samples` for a drum sample set, `synth` for a VST preset (the default), or
-   the line has no number and reads `index, milliseconds audio;` for a device
-   that applies no sound. Each pattern takes the mark it overlaps most; without
-   the file every pattern's `sound` and `mode` are `null`.
+   `samples` for a drum sample set or `synth` for a VST preset; an older file
+   may give only the number, leaving `mode` `null`. A line with no number reads
+   `index, milliseconds audio;` and marks a device that applies no sound. Each
+   pattern takes the mark it overlaps most; without the file every pattern's
+   `sound` and `mode` are `null`.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
@@ -362,7 +363,7 @@ master.
 Patterns that share a sound class are not layered twice, and the survivor is
 chosen by rating. The class comes from the pattern's mark: `samples` puts every
 drum sample set of the archive in one class whatever its number, `synth` keys on
-the sound number, and `other` keys on the palette, so a device that applies no
+the sound number, and `audio` keys on the palette, so a device that applies no
 sound competes only with its own palette. A pattern with neither sound nor mode
 never collides. After placement, patterns are kept in report order. A pattern
 that overlaps no kept stem of its class joins the song. When it does overlap one, the
@@ -453,10 +454,10 @@ Guarantees:
 
 The page plays the master or all stems in sync, seeks, mutes individual stems,
 and draws one arrangement row per stem, labelled with its pattern's length and
-the sound it was played with. Drag horizontally on a row to zoom,
-right-click to zoom out, Reset Zoom to return, and click to jump and play. Gray
-vertical guides mark the other pass loop points; a bold white line marks the
-shared song anchor on every row.
+the sound number and mode (`samples`, `synth` or `audio`) it was played with.
+Drag horizontally on a row to zoom, right-click to zoom out, Reset Zoom to
+return, and click to jump and play. Gray vertical guides mark the other pass
+loop points; a bold white line marks the shared song anchor on every row.
 
 Song-level checks:
 
