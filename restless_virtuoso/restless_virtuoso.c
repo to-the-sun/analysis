@@ -2340,7 +2340,7 @@ static void load_song_instruments(const char *array)
 
         if (instrument[0]) {
             int slot = instrument_slot(instrument, 1);
-            if (slot >= 0 && !soundList->last[slot]) soundList->last[slot] = number;
+            if (slot >= 0) soundList->last[slot] = number;
         }
 
         at = skip_space(at);
@@ -2378,23 +2378,24 @@ static void load_song(void)
     const char *sounds = json_value(text, "sounds");
     if (sounds && *sounds == '{') count = load_song_sounds(sounds, &names, &seeds);
 
-    if (!soundList->count) {
-        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
-    } else {
-        int aligned = count && (int)soundList->count >= count;
-        for (int i = 0; aligned && i < count; i++)
-            if (strcmp(soundList->name[i], names + (size_t)i * SOUND_NAME)) aligned = 0;
-        if (!aligned) {
-            log_error("'%ls' does not match the sounds this session already has, so it was not loaded.\n", path);
-            goto done;
+    /* The song's file is the numbering, so a session holding other sounds gives way to it. */
+    int adopt = !soundList->count;
+    if (!adopt && count) {
+        adopt = (int)soundList->count < count;
+        for (int i = 0; !adopt && i < count; i++)
+            if (strcmp(soundList->name[i], names + (size_t)i * SOUND_NAME)) adopt = 1;
+        if (adopt) {
+            soundList->count = 0;
+            soundList->instrumentCount = 0;
         }
     }
+    if (adopt)
+        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
 
     const char *instruments = json_value(text, "instruments");
     if (instruments && *instruments == '[') load_song_instruments(instruments);
     songReady = 1;
 
-done:
     free(names);
     free(seeds);
     free(text);
@@ -2491,15 +2492,25 @@ static int find_vst_library(const char *name)
 static int restore_sound(int number)
 {
     open_sounds();
-    if (!soundList || number < 1 || number > soundList->count) return -1;
+    if (!soundList) return -1;
 
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->count, seed = 0;
     char name[SOUND_NAME];
-    memcpy(name, soundList->name[number - 1], SOUND_NAME);
+    int found = number >= 1 && number <= count;
+    if (found) {
+        memcpy(name, soundList->name[number - 1], SOUND_NAME);
+        seed = soundList->seed[number - 1];
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+    if (!found) return -1;
     name[SOUND_NAME - 1] = 0;
 
     if (strstr(name, " drum samples")) {
         if (!drumCount) return -1;
-        seed_drums(soundList->seed[number - 1]);
+        seed_drums(seed);
         g.samplesSound = 1;
         assign_drums();
         g.soundNumber = number;

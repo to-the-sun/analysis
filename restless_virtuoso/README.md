@@ -146,8 +146,8 @@ instrument was last on. Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
 that has already closed still has its sound saved. An instance started on a song with a
-`song.json` registers those sounds in the same order and sets every instrument to its
-saved sound: instruments that are already running take it on when the stems instance
+`song.json` takes those sounds as the numbering, replacing whatever list the session
+already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
 starts, and instances started later begin on it. A drum sound keeps the seed that draws
 its sample set, so it comes back the same.
 
