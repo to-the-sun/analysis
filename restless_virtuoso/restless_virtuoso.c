@@ -428,6 +428,7 @@ static void print_wide_path(const wchar_t *path)
 
 static int playlistMode, instrumentMode;
 static volatile LONG playlistRefresh;
+static wchar_t *stemFiles[QUEUE_FILES];
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
@@ -726,7 +727,7 @@ static int start_playlist_w(const wchar_t *folder)
     }
 
     for (int i = 0; i < audioFileCount; i++)
-        if (decode_track(&stems[stemCount], audioFiles[i]) == 0) stemCount++;
+        if (decode_track(&stems[stemCount], audioFiles[i]) == 0) stemFiles[stemCount++] = audioFiles[i];
 
     if (!stemCount) {
         log_error("Every audio file in the folder failed to decode.\n");
@@ -1114,6 +1115,7 @@ static void take_finish(void)
 enum { RATING_SOLO, RATING_RECITATION, RATING_JAMMING };
 
 static void sound_name(char *out, size_t size);
+static void console_line(const char *text);
 
 typedef struct {
     const Track *track;      /* a stem being played, or NULL for this instance's own audio */
@@ -1629,6 +1631,116 @@ static void recording_name(wchar_t *out, size_t size)
     else swprintf(out, size, L"%d", recording.number);
 }
 
+/* Stems collide as they do in the song builder: two of the same sound whose active
+   audio overlaps in the song cannot both play, so a new take deletes the one it
+   replaces. */
+
+static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
+{
+    const wchar_t *name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+
+    size_t length = 0;
+    while (length + 1 < size && name[length] >= L'0' && name[length] <= L'9') length++;
+    wmemcpy(key, name, length);
+    key[length] = 0;
+}
+
+static int active_span(const Track *track, double *begin, double *end)
+{
+    if (!track->rate || !track->samples) return 0;
+
+    drwav_uint64 on = track->frames, off = 0;
+    for (drwav_uint64 i = 0; i < track->frames; i++) {
+        float peak = 0.0f;
+        for (unsigned c = 0; c < track->channels; c++) {
+            float value = fabsf(track->samples[i * track->channels + c]);
+            if (value > peak) peak = value;
+        }
+        if (peak <= TASTE_GATE) continue;
+        if (on == track->frames) on = i;
+        off = i + 1;
+    }
+    if (on == track->frames) return 0;
+
+    *begin = (double)on / (double)track->rate;
+    *end = (double)off / (double)track->rate;
+    return 1;
+}
+
+static int file_span(const wchar_t *path, double *begin, double *end)
+{
+    Track track;
+    memset(&track, 0, sizeof track);
+    if (decode_track(&track, path) != 0) return 0;
+
+    int found = active_span(&track, begin, end);
+    free(track.samples);
+    return found;
+}
+
+static int take_span(TakeChunk *first, drwav_uint64 frames, unsigned rate, drwav_uint64 offset,
+                     double *begin, double *end)
+{
+    if (!rate) return 0;
+
+    drwav_uint64 on = frames, off = 0, at = 0;
+    for (TakeChunk *chunk = first; chunk && at < frames; chunk = chunk->next) {
+        size_t count = chunk->frames;
+        if (at + count > frames) count = (size_t)(frames - at);
+        for (size_t i = 0; i < count; i++) {
+            if (fabsf(chunk->samples[i]) <= TASTE_GATE) continue;
+            if (on == frames) on = at + i;
+            off = at + i + 1;
+        }
+        at += count;
+    }
+    if (on == frames) return 0;
+
+    *begin = (double)(offset + on) / (double)rate;
+    *end = (double)(offset + off) / (double)rate;
+    return 1;
+}
+
+static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin, double end)
+{
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    wchar_t key[16];
+    stem_key(path, key, 16);
+
+    do {
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!is_audio_name(entry.cFileName)) continue;
+
+        size_t nameLength = wcslen(entry.cFileName);
+        size_t pathLength = length + nameLength + 2;
+        wchar_t *other = malloc(pathLength * sizeof *other);
+        if (!other) continue;
+        swprintf(other, pathLength, L"%ls\\%ls", folder, entry.cFileName);
+
+        wchar_t otherKey[16];
+        stem_key(other, otherKey, 16);
+
+        double otherBegin, otherEnd;
+        if (!wcscmp(otherKey, key) && _wcsicmp(other, path) &&
+            file_span(other, &otherBegin, &otherEnd) && begin < otherEnd && otherBegin < end) {
+            if (DeleteFileW(other)) log_trace("replaced %ls\n", other);
+            else log_error("Could not delete '%ls' (error %lu).\n", other, GetLastError());
+        }
+        free(other);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+}
+
 static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate, drwav_uint64 offset)
 {
     wchar_t stems[1024], folder[1200], path[1400], base[160];
@@ -1660,7 +1772,13 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
     if (!write_wav(path, first, frames, rate, offset)) return;
 
     log_trace("recorded %ls\n", path);
-    if (!shared) spawn_stems(folder);
+    if (!shared) {
+        spawn_stems(folder);
+        return;
+    }
+
+    double begin, end;
+    if (take_span(first, frames, rate, offset, &begin, &end)) prune_stems(folder, path, begin, end);
 }
 
 static void recording_stop(int spawn)
@@ -1798,13 +1916,35 @@ static double playlist_position(void)
     return position;
 }
 
+static int playlist_stems(void)
+{
+    int playing = 0;
+    for (int i = 0; i < stemCount; i++) if (stems[i].frames) playing++;
+    return playing;
+}
+
 /* Files dropped into the folder while it plays join the stems at the next loop
-   point, where they start from the top of the song with the others. */
+   point, where they start from the top of the song with the others, and a stem
+   whose file has gone stops playing. */
 static void refresh_playlist(void)
 {
     if (!playlistFolder) return;
 
     double position = playlist_position();
+    int changed = 0;
+
+    for (int i = 0; i < stemCount; i++) {
+        if (!stemFiles[i] || !stems[i].frames) continue;
+        if (GetFileAttributesW(stemFiles[i]) != INVALID_FILE_ATTRIBUTES) continue;
+
+        stems[i].frames = 0;
+        stems[i].position = 0;
+        stems[i].fraction = 0.0;
+        log_trace("dropped %ls\n", stemFiles[i]);
+        stemFiles[i] = NULL;
+        changed = 1;
+    }
+
     size_t length = wcslen(playlistFolder);
     wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
     if (!pattern) return;
@@ -1815,9 +1955,8 @@ static void refresh_playlist(void)
     free(pattern);
     if (find == INVALID_HANDLE_VALUE) return;
 
-    int added = 0;
     do {
-        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || audioFileCount == QUEUE_FILES) continue;
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         if (!is_audio_name(entry.cFileName)) continue;
 
         size_t nameLength = wcslen(entry.cFileName);
@@ -1827,30 +1966,35 @@ static void refresh_playlist(void)
         swprintf(file, fileLength, L"%ls\\%ls", playlistFolder, entry.cFileName);
 
         int known = 0;
-        for (int i = 0; i < audioFileCount && !known; i++) known = !_wcsicmp(audioFiles[i], file);
-        if (known) {
+        for (int i = 0; i < stemCount && !known; i++)
+            known = stemFiles[i] && !_wcsicmp(stemFiles[i], file);
+        if (known || stemCount == QUEUE_FILES) {
             free(file);
             continue;
         }
 
-        if (stemCount == QUEUE_FILES) {
+        if (decode_track(&stems[stemCount], file) != 0) {
             free(file);
             continue;
         }
-        audioFiles[audioFileCount++] = file;
-        if (decode_track(&stems[stemCount], file) != 0) continue;
 
         Track *track = &stems[stemCount++];
         track->position = (drwav_uint64)(position * (double)track->rate);
         track->fraction = 0.0;
+        stemFiles[stemCount - 1] = file;
+        changed = 1;
+
+        char name[128], line[192];
+        WideCharToMultiByte(CP_ACP, 0, entry.cFileName, -1, name, sizeof name, NULL, NULL);
+        snprintf(line, sizeof line, "  joined %s, %d stems playing", name, playlist_stems());
+        console_line(line);
         log_trace("joined %ls\n", file);
-        added = 1;
     } while (FindNextFileW(find, &entry));
     FindClose(find);
 
-    if (!added) return;
+    if (!changed) return;
 
-    if (cue && cue->pid == GetCurrentProcessId()) cue->stems_count = stemCount;
+    if (cue && cue->pid == GetCurrentProcessId()) cue->stems_count = playlist_stems();
     if (ratingThread) rating_request(RATING_RECITATION, L"");
 }
 
