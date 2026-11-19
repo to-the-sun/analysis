@@ -140,15 +140,24 @@ sounds, so a number identifies a drum sample set or VST preset in every take, an
 console prints the number with the description. A take with no sound applied holds
 the single line `0, 0.000000 other;`.
 
+Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
+number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
+instrument was last on. Every running
+instance writes it when its sound changes and when it closes, so the order the
+instruments and the stems instance are closed in makes no difference, and an instrument
+that has already closed still has its sound saved. An instance started on a song with a
+`song.json` takes those sounds as the numbering, replacing whatever list the session
+already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
+starts, and instances started later begin on it. A drum sound keeps the seed that draws
+its sample set, so it comes back the same.
+
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
 
-In instrument mode, click anywhere in the console for another random sound, drawn
-from `samples_path` or `vsts_path` by `samples_ratio`.
-
-The instance analyzes the audio it plays with the cumulative transience algorithm
-on a background thread, using a 15,000 ms window, its cumulative history buffer and
-four bands, and prints every score it produces to the console.
+In instrument mode, left-click anywhere in the console to move up to the next shared
+sound, or to draw a new one when it is already on the highest, and right-click to move
+back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
+`samples_ratio`.
 
 ## Notes
 

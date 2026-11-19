@@ -20,7 +20,6 @@
 
 #include "asio_abi.h"
 #include "dsp.h"
-#include "cumulative_transience.h"
 #include "vst_abi.h"
 #define DR_WAV_IMPLEMENTATION
 #include "../analysis/dr_wav.h"
@@ -37,8 +36,6 @@
 #define DEFAULT_DRIVER "Focusrite USB ASIO"
 #define TASTE_START 1
 #define TASTE_GATE 0.001f
-#define ANALYSIS_WINDOW_MS 15000
-#define ANALYSIS_BANDS 4
 
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
@@ -428,6 +425,7 @@ static void print_wide_path(const wchar_t *path)
 }
 
 static int playlistMode, instrumentMode;
+static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
 static const wchar_t *playlistFolder;
@@ -1238,9 +1236,37 @@ static void add_sample(const wchar_t *path)
     free((void *)path);
 }
 
+static int drumSeed;
+static uint64_t drumState;
+
+static void seed_drums(int seed)
+{
+    if (!seed) seed = (int)(((unsigned)rand() << 16 ^ (unsigned)rand()) & 0x7fffffffu);
+    drumSeed = seed ? seed : 1;
+    drumState = (uint64_t)(unsigned)drumSeed;
+}
+
+/* A drum set is drawn from its own seed, so the seed in song.json draws the same set again. */
+static int drum_pick(const int *taste, int count)
+{
+    long long total = 0;
+    for (int i = 0; i < count; i++) total += taste[i];
+
+    drumState += 0x9e3779b97f4a7c15ull;
+    uint64_t bits = drumState;
+    bits = (bits ^ (bits >> 30)) * 0xbf58476d1ce4e5b9ull;
+    bits = (bits ^ (bits >> 27)) * 0x94d049bb133111ebull;
+    bits ^= bits >> 31;
+
+    long long ticket = (long long)((double)(bits >> 11) * (1.0 / 9007199254740992.0) * (double)total);
+    for (int i = 0; i < count; i++)
+        if ((ticket -= taste[i]) < 0) return i;
+    return count - 1;
+}
+
 static void assign_drums(void)
 {
-    for (int note = 0; note < 128; note++) drumNoteDrum[note] = weighted_pick(drumTaste, drumCount);
+    for (int note = 0; note < 128; note++) drumNoteDrum[note] = drum_pick(drumTaste, drumCount);
     memset(drumVoices, 0, sizeof drumVoices);
 }
 
@@ -1265,6 +1291,7 @@ static void load_drums(const char *folder)
 
     drumPeaks = calloc((size_t)drumCount, sizeof *drumPeaks);
     drumTasted = calloc((size_t)drumCount, 1);
+    seed_drums(0);
     assign_drums();
 }
 
@@ -2119,25 +2146,35 @@ static void new_vst_sound(void)
 
 #define SOUND_MAX 1024
 #define SOUND_NAME 128
+#define INSTRUMENT_MAX 64
 
 typedef struct {
     volatile LONG lock;
     volatile LONG count;
     char name[SOUND_MAX][SOUND_NAME];
+    int seed[SOUND_MAX];
+    volatile LONG instrumentCount;
+    char instrument[INSTRUMENT_MAX][MAX_PATH];
+    int last[INSTRUMENT_MAX];
 } SoundList;
 
 static HANDLE soundMapping;
 static SoundList *soundList;
+static int songReady, songLive;
+
+static void open_sounds(void)
+{
+    if (soundMapping) return;
+    soundMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SoundList),
+                                      "Local\\RestlessVirtuosoSounds");
+    soundList = soundMapping ? MapViewOfFile(soundMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SoundList)) : NULL;
+}
 
 /* One list for every running instance, so a number names the same sound in each take.
    Each shuffled drum set is a different sound, so those always get a new number. */
-static int sound_number(const char *name, int unique)
+static int sound_number(const char *name, int unique, int seed)
 {
-    if (!soundMapping) {
-        soundMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SoundList),
-                                          "Local\\RestlessVirtuosoSounds");
-        soundList = soundMapping ? MapViewOfFile(soundMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SoundList)) : NULL;
-    }
+    open_sounds();
     if (!soundList) return 0;
 
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
@@ -2149,12 +2186,270 @@ static int sound_number(const char *name, int unique)
     if (!number && count < SOUND_MAX) {
         strncpy(soundList->name[count], name, SOUND_NAME - 1);
         soundList->name[count][SOUND_NAME - 1] = 0;
+        soundList->seed[count] = seed;
         number = count + 1;
         soundList->count = count + 1;
     }
 
     InterlockedExchange(&soundList->lock, 0);
     return number;
+}
+
+/* An instrument is named by its MIDI input, the same identity its settings file has. */
+static int instrument_slot(const char *name, int create)
+{
+    open_sounds();
+    if (!soundList || !name[0]) return -1;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->instrumentCount, slot = -1;
+    for (int i = 0; i < count; i++)
+        if (!_stricmp(soundList->instrument[i], name)) { slot = i; break; }
+
+    if (slot < 0 && create && count < INSTRUMENT_MAX) {
+        strncpy(soundList->instrument[count], name, MAX_PATH - 1);
+        soundList->instrument[count][MAX_PATH - 1] = 0;
+        soundList->last[count] = 0;
+        slot = count;
+        soundList->instrumentCount = count + 1;
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+    return slot;
+}
+
+static int last_sound_number(void)
+{
+    int slot = instrumentMode && instrumentName ? instrument_slot(instrumentName, 0) : -1;
+    return slot >= 0 ? soundList->last[slot] : 0;
+}
+
+static void remember_sound(int number)
+{
+    int slot = instrumentMode && instrumentName ? instrument_slot(instrumentName, 1) : -1;
+    if (slot >= 0) soundList->last[slot] = number;
+}
+
+/* song.json sits beside [palettes], one folder above the stems folder. An instrument
+   takes the folder from the cue the stems instance publishes. */
+static int song_path(wchar_t *out, size_t size)
+{
+    open_cue();
+    const wchar_t *from = playlistMode ? playlistFolder : cue && cue->folder[0] ? cue->folder : NULL;
+    if (!from) return -1;
+
+    size_t length = wcslen(from);
+    while (length > 3 && (from[length - 1] == L'\\' || from[length - 1] == L'/')) length--;
+    while (length > 3 && from[length - 1] != L'\\' && from[length - 1] != L'/') length--;
+    if (length <= 3 || length + 10 > size) return -1;
+
+    wmemcpy(out, from, length);
+    wcscpy(out + length, L"song.json");
+    return 0;
+}
+
+static const char *song_field(const char *at, char *key, size_t size)
+{
+    at = json_text(skip_space(at), key, size);
+    if (!at) return NULL;
+
+    at = skip_space(at);
+    if (*at++ != ':') return NULL;
+    return skip_space(at);
+}
+
+/* The sounds are keyed by their number and written in that order, so a number names the
+   same sound in every take. A drum sound carries the seed that draws its set. */
+static int load_song_sounds(const char *object, char **names, int **seeds)
+{
+    const char *at = skip_space(object);
+    if (*at++ != '{') return 0;
+
+    int count = 0;
+    for (;;) {
+        char key[16];
+        at = skip_space(at);
+        if (*at == '}' || !*at) break;
+
+        at = json_text(at, key, sizeof key);
+        if (!at) return count;
+
+        at = skip_space(at);
+        if (*at++ != ':') return count;
+
+        char name[SOUND_NAME] = "";
+        at = json_text(skip_space(at), name, sizeof name);
+        if (!at || !name[0]) return count;
+
+        int seed = 0;
+        const char *mark = strstr(name, ", seed ");
+        if (mark) {
+            seed = (int)strtol(mark + 7, NULL, 10);
+            name[mark - name] = 0;
+        }
+
+        char *grownNames = realloc(*names, (size_t)(count + 1) * SOUND_NAME);
+        if (!grownNames) return count;
+        *names = grownNames;
+        int *grownSeeds = realloc(*seeds, (size_t)(count + 1) * sizeof *grownSeeds);
+        if (!grownSeeds) return count;
+        *seeds = grownSeeds;
+        memcpy(*names + (size_t)count * SOUND_NAME, name, SOUND_NAME);
+        (*seeds)[count++] = seed;
+
+        at = skip_space(at);
+        if (*at == ',') { at++; continue; }
+        break;
+    }
+    return count;
+}
+
+static void load_song_instruments(const char *array)
+{
+    const char *at = skip_space(array);
+    if (*at++ != '[') return;
+
+    for (;;) {
+        at = skip_space(at);
+        if (*at == ']' || !*at) return;
+        if (*at++ != '{') return;
+
+        char instrument[MAX_PATH] = "";
+        int number = 0;
+        for (;;) {
+            char key[16];
+            at = song_field(at, key, sizeof key);
+            if (!at) return;
+
+            if (!strcmp(key, "instrument")) {
+                at = json_text(at, instrument, sizeof instrument);
+                if (!at) return;
+            } else if (!strcmp(key, "sound")) {
+                char *end;
+                number = (int)strtol(at, &end, 10);
+                if (end == at) return;
+                at = end;
+            } else return;
+
+            at = skip_space(at);
+            if (*at == ',') { at++; continue; }
+            if (*at++ != '}') return;
+            break;
+        }
+
+        if (instrument[0]) {
+            int slot = instrument_slot(instrument, 1);
+            if (slot >= 0) soundList->last[slot] = number;
+        }
+
+        at = skip_space(at);
+        if (*at != ',') return;
+        at++;
+    }
+}
+
+/* The stems instance reads the song it is resuming, so every instrument can take its
+   sound back and the numbers in the old sounds files keep naming the same sounds. */
+static void load_song(void)
+{
+    wchar_t path[1100];
+    if (song_path(path, sizeof path / sizeof *path) != 0) return;
+
+    open_sounds();
+    if (!soundList) return;
+
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) {
+        songReady = 1;
+        return;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *text = size > 0 ? malloc((size_t)size + 1) : NULL;
+    if (text) text[fread(text, 1, (size_t)size, file)] = 0;
+    fclose(file);
+    if (!text) return;
+
+    char *names = NULL;
+    int *seeds = NULL, count = 0;
+    const char *sounds = json_value(text, "sounds");
+    if (sounds && *sounds == '{') count = load_song_sounds(sounds, &names, &seeds);
+
+    /* The song's file is the numbering, so a session holding other sounds gives way to it. */
+    int adopt = !soundList->count;
+    if (!adopt && count) {
+        adopt = (int)soundList->count < count;
+        for (int i = 0; !adopt && i < count; i++)
+            if (strcmp(soundList->name[i], names + (size_t)i * SOUND_NAME)) adopt = 1;
+        if (adopt) {
+            soundList->count = 0;
+            soundList->instrumentCount = 0;
+        }
+    }
+    if (adopt)
+        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
+
+    const char *instruments = json_value(text, "instruments");
+    if (instruments && *instruments == '[') load_song_instruments(instruments);
+    songReady = 1;
+
+    free(names);
+    free(seeds);
+    free(text);
+}
+
+static void save_song(void)
+{
+    wchar_t path[1100];
+    open_sounds();
+    if (!songLive || !songReady || !soundList || song_path(path, sizeof path / sizeof *path) != 0) return;
+
+    FILE *file = _wfopen(path, L"wb");
+    if (!file) {
+        log_error("Could not write '%ls'.\n", path);
+        return;
+    }
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->count;
+    fputs("{\n  \"sounds\": {", file);
+    for (int i = 0; i < count; i++) {
+        fprintf(file, "%s\n    \"%d\": ", i ? "," : "", i + 1);
+        char entry[SOUND_NAME + 24];
+        snprintf(entry, sizeof entry, "%s, seed %d", soundList->name[i], (int)soundList->seed[i]);
+        json_write_text(file, soundList->seed[i] ? entry : soundList->name[i]);
+    }
+
+    int instruments = (int)soundList->instrumentCount;
+    fprintf(file, "%s},\n  \"instruments\": [", count ? "\n  " : "");
+    for (int i = 0; i < instruments; i++) {
+        fprintf(file, "%s\n    { \"instrument\": ", i ? "," : "");
+        json_write_text(file, soundList->instrument[i]);
+        fprintf(file, ", \"sound\": %d }", soundList->last[i]);
+    }
+    fprintf(file, "%s]\n}\n", instruments ? "\n  " : "");
+
+    int failed = ferror(file);
+    fclose(file);
+    InterlockedExchange(&soundList->lock, 0);
+    if (failed) log_error("Could not write '%ls'.\n", path);
+    else log_trace("wrote %ls\n", path);
+}
+
+/* An instrument that is already running when a stems instance starts, or that starts
+   while one plays, takes the song's sounds on as soon as its folder is known. */
+static void sync_song(void)
+{
+    static wchar_t tried[1100];
+    wchar_t path[1100];
+
+    if (songReady || song_path(path, sizeof path / sizeof *path) != 0 || !wcscmp(tried, path)) return;
+    wcscpy(tried, path);
+    load_song();
 }
 
 static void sound_name(char *out, size_t size)
@@ -2174,6 +2469,99 @@ static void sound_name(char *out, size_t size)
     }
 }
 
+static int find_vst_library(const char *name)
+{
+    for (int i = 0; i < vstLibraryCount; i++) {
+        size_t length = strlen(vstNames[i]);
+        if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
+        if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
+    }
+
+    for (int i = 0; i < vstLibraryCount; i++) {
+        AEffect *effect = create_effect(vstLibraries[i]);
+        if (!effect || !effect->dispatcher) continue;
+
+        char effectName[VST_NAME];
+        effect_name(effect, effectName, sizeof effectName);
+        effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+        if (effectName[0] && !_stricmp(effectName, name)) return i;
+    }
+    return -1;
+}
+
+static int restore_sound(int number)
+{
+    open_sounds();
+    if (!soundList) return -1;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->count, seed = 0;
+    char name[SOUND_NAME];
+    int found = number >= 1 && number <= count;
+    if (found) {
+        memcpy(name, soundList->name[number - 1], SOUND_NAME);
+        seed = soundList->seed[number - 1];
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+    if (!found) return -1;
+    name[SOUND_NAME - 1] = 0;
+
+    if (strstr(name, " drum samples")) {
+        if (!drumCount) return -1;
+        seed_drums(seed);
+        g.samplesSound = 1;
+        assign_drums();
+        g.soundNumber = number;
+        return 0;
+    }
+
+    if (strncmp(name, "VST ", 4)) return -1;
+    const char *comma = strstr(name + 4, ", ");
+    if (!comma || (size_t)(comma - name - 4) >= VST_NAME) return -1;
+
+    char plugin[VST_NAME];
+    size_t length = (size_t)(comma - name - 4);
+    memcpy(plugin, name + 4, length);
+    plugin[length] = 0;
+
+    int preset = 0, octave = 0;
+    const char *field = strstr(name, ", preset ");
+    if (field) sscanf(field, ", preset %d", &preset);
+    field = strstr(name, ", octave ");
+    if (field) sscanf(field, ", octave %d", &octave);
+
+    int library = find_vst_library(plugin);
+    if (library < 0) {
+        log_error("The sound '%s' needs a plugin that is not loaded.\n", name);
+        return -1;
+    }
+    if (preset < 1 || preset > vstLibraryPresets[library]) preset = 0;
+
+    int restart = g.started;
+    if (restart) {
+        g.asio->vtable->stop(g.asio);
+        g.started = 0;
+    }
+    close_vst_effect();
+    if (start_vst(library, preset - 1) != 0) log_error("Could not start the plugin for the sound '%s'.\n", name);
+    else {
+        vstOctave = octave;
+        g.samplesSound = 0;
+        g.soundNumber = number;
+    }
+
+    if (restart) {
+        if (g.asio->vtable->start(g.asio) == ASE_OK) g.started = 1;
+        else {
+            log_error("ASIOStart failed after restoring a sound.\n");
+            InterlockedExchange(&g.quit, 1);
+        }
+    }
+    return g.soundNumber == number ? 0 : -1;
+}
+
 /* Overwrites the meters line in place, so a message leaves no blank line behind it. */
 static void console_line(const char *text)
 {
@@ -2186,25 +2574,61 @@ static void print_sound(const char *prefix)
 {
     char name[160], line[192];
     sound_name(name, sizeof name);
-    g.soundNumber = 0;
     if (!name[0]) return;
 
-    g.soundNumber = sound_number(name, g.samplesSound);
+    if (!g.soundNumber)
+        g.soundNumber = sound_number(name, g.samplesSound, g.samplesSound ? drumSeed : 0);
+    remember_sound(g.soundNumber);
+    save_song();
+
     snprintf(line, sizeof line, "  %s%d: %s", prefix, g.soundNumber, name);
     console_line(line);
     log_trace("sound %d: %s\n", g.soundNumber, name);
 }
 
+static int take_sound(int number)
+{
+    if (restore_sound(number) != 0) return -1;
+
+    print_sound("sound ");
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+    return 0;
+}
+
+/* A stems instance that loads a song sets every instrument's last sound, so an
+   instance that was already running takes its sound on too. */
+static void follow_song_sound(void)
+{
+    static int failed;
+
+    int number = last_sound_number();
+    if (!number || number == g.soundNumber || number == failed) return;
+    failed = take_sound(number) == 0 ? 0 : number;
+}
+
 static void new_sound(void)
 {
+    g.soundNumber = 0;
     choose_sound(g.samplesRatio);
-    if (g.samplesSound) assign_drums();
-    else new_vst_sound();
+    if (g.samplesSound) {
+        seed_drums(0);
+        assign_drums();
+    } else new_vst_sound();
 
     print_sound("new sound ");
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     add_sound_mark(g.soundNumber, (ULONGLONG)now.QuadPart);
+}
+
+/* The console's clicks walk the shared sounds, and a click past the highest draws a new one. */
+static void step_sound(int step)
+{
+    if (step > 0 && g.soundNumber >= 1 && g.soundNumber < (int)soundList->count) take_sound(g.soundNumber + 1);
+    else if (step < 0 && g.soundNumber > 1) take_sound(g.soundNumber - 1);
+    else if (step > 0) new_sound();
 }
 
 static void close_vst(void)
@@ -2274,110 +2698,6 @@ static float read_master_volume(void)
     return volume;
 }
 
-/* The callback only appends the mix to this ring; a background thread analyzes it, so
-   the ASIO thread never does the transform work. */
-#define ANALYSIS_RING 262144
-
-static TransientAnalyzer *analysisAnalyzer;
-static float *analysisRing;
-static volatile LONG analysisWrite, analysisRead;
-static HANDLE analysisThread;
-
-static void analysis_push(const float *samples, int frames)
-{
-    if (!analysisRing) return;
-
-    LONG write = analysisWrite, read = analysisRead;
-    for (int i = 0; i < frames; i++) {
-        LONG next = write + 1 == ANALYSIS_RING ? 0 : write + 1;
-        if (next == read) break;
-        analysisRing[write] = samples[i];
-        write = next;
-    }
-    analysisWrite = write;
-}
-
-static int analysis_take(float *out, int count)
-{
-    LONG read = analysisRead, write = analysisWrite;
-    int available = (int)((write - read + ANALYSIS_RING) % ANALYSIS_RING);
-    if (available < count) return 0;
-
-    for (int i = 0; i < count; i++) {
-        out[i] = analysisRing[read];
-        if (++read == ANALYSIS_RING) read = 0;
-    }
-    analysisRead = read;
-    return 1;
-}
-
-static DWORD WINAPI analysis_thread(LPVOID unused)
-{
-    (void)unused;
-    ChunkAnalysisResult *chunk = malloc(sizeof *chunk);
-    float *pushed = NULL;
-    int rate = 0, step = 0, hop = 1;
-    long long total = 0;
-
-    while (!g.quit) {
-        int sr = (int)g.rate;
-        if (sr != rate) {
-            rate = sr;
-            step = (int)(sr * 0.1);
-            hop = (int)(sr * 0.001);
-            if (hop < 1) hop = 1;
-            free(pushed);
-            pushed = step > 0 ? calloc((size_t)step, sizeof *pushed) : NULL;
-            if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
-            analysisAnalyzer = sr > 0 ? analyzer_create(1.0, NULL, NULL, NULL, NULL, ANALYSIS_WINDOW_MS, ANALYSIS_BANDS) : NULL;
-            if (analysisAnalyzer) analyzer_set_sample_rate(analysisAnalyzer, sr);
-            total = 0;
-            analysisRead = analysisWrite = 0;
-        }
-        if (!analysisAnalyzer || !pushed || !chunk || !analysis_take(pushed, step)) {
-            Sleep(10);
-            continue;
-        }
-
-        int act = (int)(total - rate * 0.2);
-        int win = act - (int)(rate * (ANALYSIS_WINDOW_MS / 1000.0));
-        if (win < 0) win = 0;
-        analyzer_analyze_chunk(analysisAnalyzer, pushed, step, rate, win / hop, act / hop, chunk);
-        total += step;
-
-        for (int i = 0; i < chunk->peak_list.num_peaks; i++) {
-            PeakResult *peak = &chunk->peak_list.peaks[i];
-            char line[96];
-            snprintf(line, sizeof line, "  band %d  %9.1f ms  score %.6f", peak->band_idx, peak->time * 1000.0, peak->total_score);
-            console_line(line);
-        }
-    }
-
-    if (analysisAnalyzer) analyzer_destroy(analysisAnalyzer);
-    analysisAnalyzer = NULL;
-    free(pushed);
-    free(chunk);
-    return 0;
-}
-
-static void analysis_start(void)
-{
-    analysisRing = calloc(ANALYSIS_RING, sizeof *analysisRing);
-    if (analysisRing) analysisThread = CreateThread(NULL, 8 << 20, analysis_thread, NULL, 0, NULL);
-}
-
-static void analysis_stop(void)
-{
-    if (analysisThread) {
-        InterlockedExchange(&g.quit, 1);
-        WaitForSingleObject(analysisThread, 3000);
-        CloseHandle(analysisThread);
-        analysisThread = NULL;
-    }
-    free(analysisRing);
-    analysisRing = NULL;
-}
-
 static void process_buffer(int32_t index)
 {
     const int frames = (int)g.bufferSize;
@@ -2424,7 +2744,6 @@ static void process_buffer(int32_t index)
         sample_from_float(g.mixFloats, output, g.outFormat[j], frames);
         if (take.active) take_mix(g.mixFloats, frames);
     }
-    analysis_push(g.mixFloats, frames);
 
     if (take.active) {
         take.last->frames += (size_t)frames;
@@ -3008,7 +3327,9 @@ static void read_console_input(void)
         for (DWORD i = 0; i < read; i++) {
             if (records[i].EventType != MOUSE_EVENT || !instrumentMode) continue;
             MOUSE_EVENT_RECORD *mouse = &records[i].Event.MouseEvent;
-            if (!mouse->dwEventFlags && (mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED)) new_sound();
+            if (mouse->dwEventFlags) continue;
+            if (mouse->dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED) step_sound(1);
+            else if (mouse->dwButtonState & RIGHTMOST_BUTTON_PRESSED) step_sound(-1);
         }
     }
 }
@@ -3069,6 +3390,7 @@ static void shutdown_monitor(void)
         g.asio = NULL;
     }
     if (settingsPath) save_settings(settingsPath, settingsOptions);
+    if (playlistMode) save_song();
     take_finish();
     clear_loop_cue();
     if (deviceEnumerator) {
@@ -3324,6 +3646,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
                 return 1;
             }
             instrumentMode = 1;
+            instrumentName = options.instrument;
             g.synthEnabled = 0;
             g.midiChannel = options.inputChannel;
             if (!options.midiIn) options.midiIn = options.instrument;
@@ -3405,11 +3728,16 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (setup_rate(options.rate) != 0) goto done;
     if (setup_buffer(options.buffer) != 0) goto done;
+    open_cue();
+    if (playlistMode || instrumentMode) load_song();
     if (instrumentMode) {
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
-        choose_sound(options.samplesRatio);
-        if (!g.samplesSound) start_drawn_vst();
+        int previous = last_sound_number();
+        if (!previous || restore_sound(previous) != 0) {
+            choose_sound(options.samplesRatio);
+            if (!g.samplesSound) start_drawn_vst();
+        }
     }
     log_trace("rate and buffer set\n");
     if (create_buffers() != 0) goto done;
@@ -3441,7 +3769,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     }
 
     if (playlistMode) publish_palette(playlistFolder);
-    open_cue();
     take_join();
     if (instrumentMode) {
         LARGE_INTEGER at;
@@ -3453,11 +3780,11 @@ static int run(int argc, char **argv, const wchar_t *folder)
         goto done;
     }
     g.started = 1;
+    songLive = 1;
     if (playlistMode) send_loop_start();
     log_trace("started\n");
 
     init_console_input();
-    analysis_start();
 
     ULONGLONG lastDraw = 0;
     while (!g.quit) {
@@ -3499,6 +3826,8 @@ static int run(int argc, char **argv, const wchar_t *folder)
         take_flush();
 
         read_console_input();
+        sync_song();
+        follow_song_sound();
 
         ULONGLONG now = GetTickCount64();
         if (now - lastDraw >= 100) {
@@ -3512,9 +3841,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     exitCode = 0;
 
 done:
-    /* shutdown_monitor stops the driver, so no audio callback can reach the ring. */
     shutdown_monitor();
-    analysis_stop();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
     printf("\n");
