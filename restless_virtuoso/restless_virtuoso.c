@@ -2019,8 +2019,12 @@ static void rating_poll(void)
     } else if (recording.active) recording_stop(1);
 }
 
+static double playlistElapsed;
+
 static void advance_tracks(void)
 {
+    playlistElapsed += 1.0 / g.rate;
+
     int finished = 1;
     for (int i = 0; i < stemCount; i++) {
         Track *track = &stems[i];
@@ -2043,6 +2047,7 @@ static void advance_tracks(void)
         stems[i].position = 0;
         stems[i].fraction = 0;
     }
+    playlistElapsed = 0.0;
     send_loop_start();
     InterlockedExchange(&playlistRefresh, 1);
     InterlockedExchange(&ratingLoop, 1);
@@ -2074,18 +2079,6 @@ static double playlist_length(void)
     return length;
 }
 
-static double playlist_position(void)
-{
-    double position = 0.0;
-
-    for (int i = 0; i < stemCount; i++) {
-        if (!stems[i].rate) continue;
-        double seconds = (double)stems[i].position / (double)stems[i].rate;
-        if (seconds > position) position = seconds;
-    }
-    return position;
-}
-
 static int playlist_stems(void)
 {
     int playing = 0;
@@ -2100,7 +2093,7 @@ static void refresh_playlist(void)
 {
     if (!playlistFolder) return;
 
-    double position = playlist_position();
+    double position = playlistElapsed;
     int changed = 0;
 
     load_stem_leads();
@@ -4650,7 +4643,7 @@ static void draw_meters(void)
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
 
     if (playlistMode) {
-        double position = playlist_position(), total = playlist_length();
+        double position = playlistElapsed, total = playlist_length();
         int filled = total > 0.0 ? (int)(position / total * 24.0) : 0;
         if (filled > 24) filled = 24;
 
