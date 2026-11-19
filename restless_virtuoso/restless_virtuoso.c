@@ -1794,16 +1794,16 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
         else swprintf(path, 1400, L"%ls\\%ls %d.wav", folder, base, attempt);
         if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) break;
     }
+    double begin, end;
+    if (!take_span(first, frames, rate, offset, &begin, &end)) {
+        log_trace("take was silent; not written\n");
+        return;
+    }
     if (!write_wav(path, first, frames, rate, offset)) return;
 
     log_trace("recorded %ls\n", path);
-    if (!shared) {
-        spawn_stems(folder);
-        return;
-    }
-
-    double begin, end;
-    if (take_span(first, frames, rate, offset, &begin, &end)) prune_stems(folder, path, begin, end);
+    if (!shared) spawn_stems(folder);
+    else prune_stems(folder, path, begin, end);
 }
 
 static void recording_stop(int spawn)
@@ -1929,6 +1929,18 @@ static void render_playlist(float *dst, int outputs, int frames)
 }
 
 /* How far into the loop the stems have played, in seconds. */
+static double playlist_length(void)
+{
+    double length = 0.0;
+
+    for (int i = 0; i < stemCount; i++) {
+        if (!stems[i].rate) continue;
+        double seconds = (double)stems[i].frames / (double)stems[i].rate;
+        if (seconds > length) length = seconds;
+    }
+    return length;
+}
+
 static double playlist_position(void)
 {
     double position = 0.0;
@@ -4273,6 +4285,21 @@ static void draw_meters(void)
     length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
                        length ? "  " : "", rating_current(), ratingBurst);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
+
+    if (playlistMode) {
+        double position = playlist_position(), total = playlist_length();
+        int filled = total > 0.0 ? (int)(position / total * 24.0) : 0;
+        if (filled > 24) filled = 24;
+
+        char bar[25];
+        memset(bar, '-', 24);
+        memset(bar, '=', (size_t)filled);
+        bar[24] = 0;
+
+        length += snprintf(line + length, sizeof line - (size_t)length, "  [%s] %5.1f/%5.1fs",
+                           bar, position, total);
+        if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
+    }
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));
         length = g.lineWidth;
