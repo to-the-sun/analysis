@@ -1690,7 +1690,7 @@ static int export_single_stem_assets_from_res(
         ERRPRINTF("Error: the .ctbin asset could not be written for report '%s'; the report folder will be incomplete.\n", stem_name);
     }
 
-    // Segment transience grouping & pattern derivation
+    // Segment flux grouping & pattern derivation
     double total_duration_ms = ((double)len / (double)sr) * 1000.0;
     SegmentInfo* segments = NULL;
     int num_segments = 0;
@@ -2202,7 +2202,7 @@ static int export_single_stem_assets_from_res(
         fprintf(f_html, "    <div class=\"canvas-container\" style=\"background: #ffffff;\">\n");
         fprintf(f_html, "        <canvas id=\"clusterHistogramCanvas\" width=\"1150\" height=\"220\"></canvas>\n");
         fprintf(f_html, "    </div>\n");
-        fprintf(f_html, "    <div class=\"hint\">💡 Accumulated 15,000ms cumulative transience buffer contour recorded across the song (sampled every 99ms). The gold dashed line marks the segment length high point.</div>\n");
+        fprintf(f_html, "    <div class=\"hint\">💡 Accumulated 15,000ms cumulative flux buffer contour recorded across the song (sampled every 99ms). The gold dashed line marks the segment length high point.</div>\n");
 
         fprintf(f_html, "    <div class=\"section-title\">1. Interactive Audio Waveform & Pattern Map</div>\n");
         fprintf(f_html, "    <div class=\"audio-controls\">\n");
@@ -2591,7 +2591,7 @@ static int export_single_stem_assets_from_res(
         fprintf(f_html, "        }\n");
         fprintf(f_html, "        histCtx.save(); histCtx.translate(18, padTop + graphH / 2); histCtx.rotate(-Math.PI / 2); histCtx.textAlign = 'center';\n");
         fprintf(f_html, "        histCtx.fillStyle = '#7f8c8d'; histCtx.font = '11px Segoe UI, sans-serif';\n");
-        fprintf(f_html, "        histCtx.fillText('Accumulated Transience', 0, 0); histCtx.restore();\n");
+        fprintf(f_html, "        histCtx.fillText('Accumulated Flux', 0, 0); histCtx.restore();\n");
         fprintf(f_html, "        histCtx.fillStyle = '#2c3e50'; histCtx.font = 'bold 13px Segoe UI, sans-serif'; histCtx.textAlign = 'left';\n");
         fprintf(f_html, "        histCtx.fillText(`Accumulated Buffer Contour Histogram (Segment Length: ${bestBarLengthMs.toFixed(2)} ms)`, padLeft, padTop - 10);\n");
         fprintf(f_html, "    }\n\n");
@@ -2707,7 +2707,7 @@ static int export_single_stem_assets_from_res(
 
         fprintf(f_html, "        bufCtx.save(); bufCtx.translate(20, padTop + graphH / 2); bufCtx.rotate(-Math.PI / 2);\n");
         fprintf(f_html, "        bufCtx.fillStyle = '#7f8c8d'; bufCtx.font = '11px Segoe UI, sans-serif'; bufCtx.textAlign = 'center';\n");
-        fprintf(f_html, "        bufCtx.fillText('Transience Flux / Energy', 0, 0); bufCtx.restore();\n");
+        fprintf(f_html, "        bufCtx.fillText('Flux / Energy', 0, 0); bufCtx.restore();\n");
         fprintf(f_html, "        bufCtx.fillStyle = '#7f8c8d'; bufCtx.font = '11px Segoe UI, sans-serif'; bufCtx.textAlign = 'center';\n");
         fprintf(f_html, "        bufCtx.fillText('Historical Window Time (ms)', padLeft + graphW / 2, padTop + graphH + 34);\n");
 
@@ -3335,7 +3335,7 @@ static unsigned int __stdcall pass2_stem_worker_win(void* arg) {
         (*(t->completed_steps_counter))++;
         int cnt = *(t->completed_steps_counter);
         int total_work = t->total_steps * t->total_stems;
-        print_progress_bar(cnt, total_work, "Pass 2: Group Transience Analysis");
+        print_progress_bar(cnt, total_work, "Pass 2: Group Flux Analysis");
         group_mutex_unlock(t->progress_mutex);
     }
 
@@ -3427,7 +3427,7 @@ static void* pass2_stem_worker_posix(void* arg) {
         (*(t->completed_steps_counter))++;
         int cnt = *(t->completed_steps_counter);
         int total_work = t->total_steps * t->total_stems;
-        print_progress_bar(cnt, total_work, "Pass 2: Group Transience Analysis");
+        print_progress_bar(cnt, total_work, "Pass 2: Group Flux Analysis");
         group_mutex_unlock(t->progress_mutex);
     }
 
@@ -3705,13 +3705,13 @@ static int export_group_html_report_for_original(
     // in.  The direct-flux path is not used: it copies the per-millisecond peak
     // of its input into every band, which would give four identical peak series.
     if (!analyzer_batch_analyze_shared(group_audio, group_audio_len, group_audio_sr, pass2_win_ms, 4, NULL, &res2_group, 0)) {
-        ERRPRINTF("Error: Failed to perform transience analysis for group HTML report '%s'.\n"
+        ERRPRINTF("Error: Failed to perform flux analysis for group HTML report '%s'.\n"
                   "       The folder %s was created but no assets were written to it.\n",
                   report_stem_name, report_dir);
         return 0;
     }
 
-    ERRPRINTF("[Group Mode] Transience analysis completed for group HTML report. Writing assets...\n");
+    ERRPRINTF("[Group Mode] Flux analysis completed for group HTML report. Writing assets...\n");
 
     int export_ok = export_single_stem_assets_from_res(
         report_dir,
@@ -4241,8 +4241,8 @@ int export_group_assets_and_html(
     int total_p2_steps = (max_len + flush_samples + step - 1) / step;
     if (total_p2_steps < 1) total_p2_steps = 1;
 
-    printf("\nStarting Pass 2: Group Transience Analysis across %d stem(s)...\n", num_stems);
-    print_progress_bar(0, total_p2_steps, "Pass 2: Group Transience Analysis");
+    printf("\nStarting Pass 2: Group Flux Analysis across %d stem(s)...\n", num_stems);
+    print_progress_bar(0, total_p2_steps, "Pass 2: Group Flux Analysis");
 
     Pass2StemTask* p2_tasks = (Pass2StemTask*)calloc(num_stems, sizeof(Pass2StemTask));
     volatile int p2_completed_steps = 0;

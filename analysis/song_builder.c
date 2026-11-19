@@ -26,7 +26,7 @@
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 
-#include "cumulative_transience.h"
+#include "cumulative_flux.h"
 
 typedef struct {
     char stem_filename[512];

@@ -26,8 +26,8 @@ import passes
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
 HERE = os.path.dirname(os.path.abspath(__file__))
-RATER = os.path.join(HERE, 'transience_rating')
-RATER_SOURCES = [os.path.join(HERE, n) for n in ('transience_rating.c', 'cumulative_transience.c')]
+RATER = os.path.join(HERE, 'flux_rating')
+RATER_SOURCES = [os.path.join(HERE, n) for n in ('flux_rating.c', 'cumulative_flux.c')]
 
 
 def rater_executable():

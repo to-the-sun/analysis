@@ -23,7 +23,7 @@
 #define S_ISDIR(mode) (((mode) & S_IFDIR) == S_IFDIR)
 #endif
 
-#include "cumulative_transience.h"
+#include "cumulative_flux.h"
 #include "exporter.h"
 
 static void get_directory_and_stem(const char* filepath, char* out_dir, char* out_stem) {
@@ -292,7 +292,7 @@ static int process_single_file(const char* audio_filepath, int window_ms) {
 
     copy_matching_passes_text_files(dir_path, stem_name, output_dir);
 
-    printf("\nRunning standalone transience analysis, pattern finding, & asset exports in pure C...\n");
+    printf("\nRunning standalone flux analysis, pattern finding, & asset exports in pure C...\n");
 
     int success = export_all_assets_and_html(
         audio_filepath,
@@ -599,7 +599,7 @@ static int process_group_files(const FileList* wav_files, const char* base_dir, 
     }
 
     printf("[Group Mode] Resolved group name: '%s'\n", group_name);
-    printf("\nRunning grouped cumulative transience analysis & asset exports in pure C...\n");
+    printf("\nRunning grouped cumulative flux analysis & asset exports in pure C...\n");
     if (original_audio_filepath && original_audio_filepath[0] != '\0') {
         printf("Original audio file specified: %s\n", original_audio_filepath);
     }
@@ -634,7 +634,7 @@ static int process_group_files(const FileList* wav_files, const char* base_dir, 
 
 int main(int argc, char** argv) {
     printf("============================================================\n");
-    printf("  Standalone C Cumulative Transience Analyzer & Exporter\n");
+    printf("  Standalone C Cumulative Flux Analyzer & Exporter\n");
     printf("============================================================\n\n");
 
     int is_group_mode = 0;

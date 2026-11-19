@@ -1,5 +1,5 @@
-#ifndef CUMULATIVE_TRANSIENCE_H
-#define CUMULATIVE_TRANSIENCE_H
+#ifndef CUMULATIVE_FLUX_H
+#define CUMULATIVE_FLUX_H
 
 #include <stdint.h>
 #include <stdbool.h>

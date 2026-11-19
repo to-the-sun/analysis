@@ -5,12 +5,12 @@ LDFLAGS ?= -lm -lOpenCL -lpthread
 
 TARGET = analyze
 WIN_TARGET = analyze.exe
-SOURCES = analyze.c exporter.c cumulative_transience.c crossfade.c
+SOURCES = analyze.c exporter.c cumulative_flux.c crossfade.c
 OBJECTS = $(SOURCES:.c=.o)
 
 SONG_TARGET = song_builder
 SONG_WIN_TARGET = song_builder.exe
-SONG_SOURCES = song_builder.c cumulative_transience.c
+SONG_SOURCES = song_builder.c cumulative_flux.c
 
 FLUX_TARGET = flux_separator
 FLUX_WIN_TARGET = flux_separator.exe

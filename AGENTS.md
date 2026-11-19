@@ -113,8 +113,8 @@ Use markdown.
 ## Building the analyzer
 
 - `analysis/` holds the C tools. `analyze.exe` builds from `analyze.c`,
-  `exporter.c`, `cumulative_transience.c`, and `crossfade.c`;
-  `song_builder.exe` builds from `song_builder.c` and `cumulative_transience.c`;
+  `exporter.c`, `cumulative_flux.c`, and `crossfade.c`;
+  `song_builder.exe` builds from `song_builder.c` and `cumulative_flux.c`;
   `flux_separator.exe` builds from `flux_separator.c`.
 - Windows build: `make analyze.exe`, `make song_builder.exe`, and
   `make flux_separator.exe` in `analysis/` with mingw-w64

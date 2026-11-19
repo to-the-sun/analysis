@@ -92,10 +92,10 @@ across patterns or across the file. Measure each region on its own terms.
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
 7. Dependencies: Python 3, NumPy, SciPy. `ffmpeg` only for non-WAV input. The
-   overlap rating compiles `transience_rating.c` with `cc` on first use and
+   overlap rating compiles `flux_rating.c` with `cc` on first use and
    runs the binary beside the scripts. It uses this folder's own copy of
-   `cumulative_transience.c` and `cumulative_transience.h`;
-   `analysis/cumulative_transience.c` is not used.
+   `cumulative_flux.c` and `cumulative_flux.h`;
+   `analysis/cumulative_flux.c` is not used.
 
 ### 0a. The passes format
 
@@ -367,7 +367,7 @@ sound competes only with its own palette. A pattern with neither sound nor mode
 never collides. After placement, patterns are kept in report order. A pattern
 that overlaps no kept stem of its class joins the song. When it does overlap one, the
 song as it stands at that moment is rated twice through the bundled copy of
-`cumulative_transience.c`: once with the new pattern and once with the kept one,
+`cumulative_flux.c`: once with the new pattern and once with the kept one,
 each alongside every other stem currently in the song, all of them accumulating
 into one shared history buffer with a 15,000 ms window and 4 bands. A rating is
 the average of every score every stem produced over the whole song; the higher

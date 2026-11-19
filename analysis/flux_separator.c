@@ -4,7 +4,7 @@
  * Perfect Reconstruction Pitch Stem Separator - Spectral Flux Focus
  * Multi-File, Directory Scanning & Multi-Threaded Concurrent Execution
  *
- * Focuses strictly on deriving per-pitch-stem transience flux envelopes,
+ * Focuses strictly on deriving per-pitch-stem flux envelopes,
  * exporting each stem's modified flux WAV next to the pitch stems, and
  * recombining them into the [flux] modified flux WAV the later tools consume.
  *
@@ -611,7 +611,7 @@ void modify_flux_envelope_channel(double *env, uint32_t total_samples) {
     free(peaks);
 }
 
-void compute_stem_transience_flux(const double *stem_data, uint32_t total_samples, uint32_t num_channels, uint32_t sample_rate, double *flux_out, int normalize) {
+void compute_stem_flux(const double *stem_data, uint32_t total_samples, uint32_t num_channels, uint32_t sample_rate, double *flux_out, int normalize) {
     if (!stem_data || !flux_out || total_samples == 0 || num_channels == 0) return;
 
     memset(flux_out, 0, (size_t)total_samples * num_channels * sizeof(double));
@@ -907,7 +907,7 @@ void generate_flux_html_report(
     fprintf(f, "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     fprintf(f, "<meta charset=\"UTF-8\">\n");
     fprintf(f, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-    fprintf(f, "<title>Spectral Flux Transience Report - %s</title>\n", basename);
+    fprintf(f, "<title>Spectral Flux Report - %s</title>\n", basename);
     fprintf(f, "<style>\n");
     fprintf(f, "  :root { --bg: #121216; --card-bg: #1a1a22; --border: #2a2a36; --text: #e1e1e6; --muted: #a0a0b0; --accent: #2196f3; }\n");
     fprintf(f, "  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }\n");
@@ -937,7 +937,7 @@ void generate_flux_html_report(
     fprintf(f, "</style>\n</head>\n<body>\n");
 
     fprintf(f, "<header>\n");
-    fprintf(f, "  <h1>Spectral Flux Transience Report</h1>\n");
+    fprintf(f, "  <h1>Spectral Flux Report</h1>\n");
     fprintf(f, "  <div class=\"meta-p\">\n");
     fprintf(f, "    <span><strong>Source File:</strong> %s</span>\n", basename);
     fprintf(f, "    <span><strong>Duration:</strong> %.2fs</span>\n", duration);
@@ -2372,7 +2372,7 @@ int process_audio(const char *input_path, const char *stem_dir, FileBatchResult 
         if (active_ms >= 99.0 && stem_rms > 1e-6) {
             raw_flux_buf = (double*)malloc(total_channel_samples * sizeof(double));
             if (raw_flux_buf) {
-                compute_stem_transience_flux(unpadded_data, total_samples, num_channels, sample_rate, raw_flux_buf, 1);
+                compute_stem_flux(unpadded_data, total_samples, num_channels, sample_rate, raw_flux_buf, 1);
             }
         }
 
