@@ -178,6 +178,8 @@ instrument instance with one running adds one analyzer per stem that instance pl
 all sharing a second group buffer with its own analyzer, so their scores together give
 it a separate jamming rating. It then records while the jamming rating is above the
 recitation rating, and its takes are written into that instance's `[stems]` folder.
+Closing that instance drops the take in progress and its memory instead of writing it
+as a project of its own, and the rating starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a

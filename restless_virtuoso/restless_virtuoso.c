@@ -1156,7 +1156,7 @@ typedef struct {
     unsigned rate;
     TakeChunk *first, *last;
     drwav_uint64 frames, offset;
-    int number;
+    int number, jamming;
     char sound[96];
 } Recording;
 
@@ -1815,13 +1815,16 @@ static void recording_stop(int spawn)
     TakeChunk *first = recording.first;
     drwav_uint64 frames = recording.frames, offset = recording.offset;
     unsigned rate = recording.rate;
+    int jamming = recording.jamming;
     recording.first = recording.last = NULL;
     recording.frames = 0;
     recording.offset = 0;
     LeaveCriticalSection(&recordingLock);
 
     if (frames && rate) {
-        if (spawn) save_recording(first, frames, rate, offset);
+        /* A take that jammed into a song is dropped with it, rather than written as a
+           project of its own, once that song's instance is gone. */
+        if (spawn && (!jamming || stems_instance(NULL, 0, NULL))) save_recording(first, frames, rate, offset);
         else log_trace("discarded %llu recorded frames\n", (unsigned long long)frames);
     }
 
@@ -1835,7 +1838,8 @@ static void recording_stop(int spawn)
 
 static void recording_start(void)
 {
-    double position = stems_instance(NULL, 0, NULL) ? rating_elapsed() : 0.0;
+    int jamming = stems_instance(NULL, 0, NULL);
+    double position = jamming ? rating_elapsed() : 0.0;
     if (position < 0.0) position = 0.0;
 
     recording.number = 0;
@@ -1849,6 +1853,7 @@ static void recording_start(void)
     recording.rate = (unsigned)g.rate;
     recording.frames = 0;
     recording.offset = (drwav_uint64)(position * (double)g.rate);
+    recording.jamming = jamming;
     recording.active = 1;
     LeaveCriticalSection(&recordingLock);
 }
@@ -1862,6 +1867,14 @@ static void rating_poll(void)
     double recitation = 0.0;
     int shared = stems_instance(folder, 1024, &recitation);
     int mode = playlistMode ? RATING_RECITATION : shared ? RATING_JAMMING : RATING_SOLO;
+
+    static int jamming;
+    if (jamming && mode != RATING_JAMMING) {
+        recording_stop(0);
+        ratingValue = 0.0;
+        ratingBurst = 0.0;
+    }
+    jamming = mode == RATING_JAMMING;
 
     int count = shared && cue ? (int)cue->stems_count : 0;
     if (ratingThread && (mode != ratingRequestedMode ||
