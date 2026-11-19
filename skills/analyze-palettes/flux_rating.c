@@ -5,7 +5,7 @@
 #include <string.h>
 #include <float.h>
 
-#include "cumulative_transience.h"
+#include "cumulative_flux.h"
 
 #define WINDOW_MS 15000
 #define BANDS 4
@@ -82,7 +82,7 @@ static float* read_pcm16(const char* path, long long* frames, int* sample_rate) 
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: transience_rating <stem.wav> [stem.wav ...]\n");
+        fprintf(stderr, "usage: flux_rating <stem.wav> [stem.wav ...]\n");
         return 2;
     }
 

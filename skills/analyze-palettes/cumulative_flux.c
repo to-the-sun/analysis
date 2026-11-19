@@ -1,5 +1,5 @@
 #define _USE_MATH_DEFINES
-#include "cumulative_transience.h"
+#include "cumulative_flux.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>

@@ -1,15 +1,15 @@
-# Standalone Offline Cumulative Transience Analyzer & Exporter
+# Standalone Offline Cumulative Flux Analyzer & Exporter
 
-This directory contains the pure C implementation of the offline transience analyzer and HTML report exporter (`analyze`), pitch stem spectral flux separator (`flux_separator`), pattern song rating builder (`song_builder`), and group analysis launcher (`analyze_group.bat`).
+This directory contains the pure C implementation of the offline flux analyzer and HTML report exporter (`analyze`), pitch stem spectral flux separator (`flux_separator`), pattern song rating builder (`song_builder`), and group analysis launcher (`analyze_group.bat`).
 
 ## Architecture
 
 The C pipeline operates in two passes without Python dependencies:
 
 1. **Pass 1 (15,000ms Rolling Window)**:
-   - Performs transience analysis across 4 frequency bands using a 15,000ms window (`pass1_window_ms = 15000`).
+   - Performs flux analysis across 4 frequency bands using a 15,000ms window (`pass1_window_ms = 15000`).
    - Determines the longest stable high point (`best_bar_length_ms`).
-   - Tracks the accumulated transience contour histogram across the song to determine the segment length high point.
+   - Tracks the accumulated flux contour histogram across the song to determine the segment length high point.
 
 2. **Pass 2 (Adaptive Window = `max(5000, min(15000, best_bar_length * 2))`)**:
    - Re-analyzes the audio with the optimized window size for peak detection, pattern identification, and segment scoring.
@@ -21,7 +21,7 @@ The C pipeline operates in two passes without Python dependencies:
 
 ## Grouped Analysis & Multithreading Architecture (`--group` / `-g`)
 
-When invoked with `--group` (or `-g`), the analyzer executes multi-file grouped stem analysis across all WAV files in a target palette directory, computing shared cross-stem transience metrics while maximizing multi-core CPU and GPU utilization. An optional argument `--original <path>` (or `-o <path>`) allows specifying the absolute or relative path to an original audio file.
+When invoked with `--group` (or `-g`), the analyzer executes multi-file grouped stem analysis across all WAV files in a target palette directory, computing shared cross-stem flux metrics while maximizing multi-core CPU and GPU utilization. An optional argument `--original <path>` (or `-o <path>`) allows specifying the absolute or relative path to an original audio file.
 
 When searching for original audio files to extract audio from for creating `[stems]` and `[loops]`, the analyzer inspects parent folders level-by-level starting at the parent directory above the folder containing `analyze.exe`. It looks for a WAV file whose whole name (minus extension) matches the beginning of the stem WAV file in question (case-insensitive). If a match is found in a parent directory level, higher parent directories are forgone. Matching `passes` text files associated with dynamically located original audio files are scanned and copied next to the report that consumes them (the group report folder, or the standalone report folder); individual per-stem palette folders do not receive copies, because their pass intervals come from the group report.
 
@@ -30,7 +30,7 @@ When searching for original audio files to extract audio from for creating `[ste
 2. **Parallel STFT Envelope Pre-Computation**:
    - Dispatches STFT spectral flux envelope calculation for all stems in parallel across CPU worker threads and OpenCL GPU compute queues (`gpu_stft_process`).
 3. **Thread-Safe Lockstep Chunk Processing**:
-   - Pass 1 and Pass 2 time-step chunk loops execute concurrently across stems, with thread synchronization (`GroupMutex`: `CRITICAL_SECTION` / `pthread_mutex_t`) protecting shared accumulated transience updates (`SharedTransientBuffer`).
+   - Pass 1 and Pass 2 time-step chunk loops execute concurrently across stems, with thread synchronization (`GroupMutex`: `CRITICAL_SECTION` / `pthread_mutex_t`) protecting shared accumulated flux updates (`SharedTransientBuffer`).
 4. **Parallel Per-Stem Asset Export & Group Pattern Combination**:
    - Concurrently exports `.ctbin`, `snapshots.bin`, `snapshots.js`, `manifest.json`, `report_data.json/js`, and `<stem>.html` for all stems (omitting common stem name prefixes from created stem output directories to keep path lengths short).
    - Collects all patterns derived by individual audio files (stems) and groups stems sharing the same original audio file. Overlapping pattern intervals are combined only among stems that share an original audio file.
@@ -66,14 +66,14 @@ To compile the analysis executables:
 
 - **Linux**: `make` (produces `analyze`, `song_builder`, and `flux_separator`)
 - **Windows (64-bit Cross-Compilation)**:
-  - `x86_64-w64-mingw32-gcc -O3 -I. -Wall -Wextra analyze.c exporter.c cumulative_transience.c crossfade.c -o analyze.exe -lm -lpthread -lOpenCL`
-  - `x86_64-w64-mingw32-gcc -O3 -I. -Wall -Wextra song_builder.c cumulative_transience.c -o song_builder.exe -lm -lpthread -lOpenCL`
+  - `x86_64-w64-mingw32-gcc -O3 -I. -Wall -Wextra analyze.c exporter.c cumulative_flux.c crossfade.c -o analyze.exe -lm -lpthread -lOpenCL`
+  - `x86_64-w64-mingw32-gcc -O3 -I. -Wall -Wextra song_builder.c cumulative_flux.c -o song_builder.exe -lm -lpthread -lOpenCL`
   - `x86_64-w64-mingw32-gcc -O3 -Wall -std=c99 -I. -pthread flux_separator.c -o flux_separator.exe -lm`
 
 ## Executables Summary
 
 - **`flux_separator` / `flux_separator.exe`**: Multi-threaded C pitch separator writing each source file's per-stem modified flux WAVs and its recombined flux WAV, plus the interactive HTML flux reports under `--debug`. Automatically copies `analyze_group.bat`, `analyze.exe`, and `song_builder.exe` into `pitch_stems/`.
 - **`flux_separator_debug.bat`**: Double-click launcher for `flux_separator.exe --debug`. It runs the separator from its own folder, so every WAV beside it is separated with the debug artifacts enabled; keep it next to `flux_separator.exe`.
-- **`analyze` / `analyze.exe`**: C cumulative transience analyzer generating palette pattern maps, loop/stem WAV slices, JSON manifests, and interactive HTML reports.
+- **`analyze` / `analyze.exe`**: C cumulative flux analyzer generating palette pattern maps, loop/stem WAV slices, JSON manifests, and interactive HTML reports.
 - **`analyze_group.bat`**: Batch launcher for group stem analysis. Launches `analyze.exe --group`, which copies `song_builder.exe` into `[palettes]/[stems]/` itself, leaving the original in place.
-- **`song_builder` / `song_builder.exe`**: Rates candidate pattern sets with the cumulative transience algorithm using 4 bands and a 15,000ms window. Every pattern in a proposed song runs through its own analyzer, all analyzers accumulate into one shared group history, and the scores they generate are summed to give the song rating. A random pattern starts the song; at each step a random pattern not yet in the song is proposed, and it is added when the rating of the song including it is higher than the rating without it. Rounds of random proposals continue until a full round adds nothing. The random seed is printed and can be passed as the second argument to repeat a run. Selected pattern WAV files are copied into `[stems]/[song]`, mixed into `[song]/finished_song.wav` normalized to peak 1.0 (omitting leading zero samples prior to the first non-zero sample so that the first non-zero sample is at index zero), and exported with an interactive HTML report (`song_rating_report.html`, displaying patterns in the order they were judged) and companion JS data file (`song_rating_waveform_data.js`).
+- **`song_builder` / `song_builder.exe`**: Rates candidate pattern sets with the cumulative flux algorithm using 4 bands and a 15,000ms window. Every pattern in a proposed song runs through its own analyzer, all analyzers accumulate into one shared group history, and the scores they generate are summed to give the song rating. A random pattern starts the song; at each step a random pattern not yet in the song is proposed, and it is added when the rating of the song including it is higher than the rating without it. Rounds of random proposals continue until a full round adds nothing. The random seed is printed and can be passed as the second argument to repeat a run. Selected pattern WAV files are copied into `[stems]/[song]`, mixed into `[song]/finished_song.wav` normalized to peak 1.0 (omitting leading zero samples prior to the first non-zero sample so that the first non-zero sample is at index zero), and exported with an interactive HTML report (`song_rating_report.html`, displaying patterns in the order they were judged) and companion JS data file (`song_rating_waveform_data.js`).

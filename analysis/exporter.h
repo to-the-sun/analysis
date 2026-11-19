@@ -23,7 +23,7 @@ typedef CRITICAL_SECTION GroupMutex;
 typedef pthread_mutex_t GroupMutex;
 #endif
 
-#include "cumulative_transience.h"
+#include "cumulative_flux.h"
 
 void group_mutex_init(GroupMutex* mutex);
 void group_mutex_lock(void* lock_obj);
