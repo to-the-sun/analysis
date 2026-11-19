@@ -210,7 +210,9 @@ playing at that point and is named the same way, as `dropped`.
 
 Stems of the same sound never overlap in the song, as in the song builder: a take whose
 active audio overlaps an older take of the same sound deletes that file, and the stems
-instance drops it from the loop.
+instance drops it from the loop. For the same reason a stems instance mutes every stem
+of a sound an instrument instance is playing, so the live instance is the only voice of
+that sound, and plays them again when that instance stops or changes sound.
 
 ## Notes
 

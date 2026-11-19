@@ -372,6 +372,7 @@ typedef struct {
     unsigned channels, rate;
     double fraction;
     double wait;             /* frames left before the stem's lead-in is up */
+    volatile LONG muted;     /* an instrument instance is playing the stem's sound */
 } Track;
 
 static wchar_t *long_path(const wchar_t *path)
@@ -447,6 +448,7 @@ static void load_stem_leads(void);
 static double stem_lead(const wchar_t *file);
 static void set_stem_lead(const wchar_t *file, double lead);
 static void save_stem_leads(void);
+static int sound_live(int number);
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
@@ -784,7 +786,7 @@ static int start_playlist(const char *folder)
 
 static float track_sample(const Track *track, int output)
 {
-    if (!track->samples || track->position >= track->frames || track->wait > 0.0) return 0.0f;
+    if (!track->samples || track->position >= track->frames || track->wait > 0.0 || track->muted) return 0.0f;
 
     size_t channel = (size_t)output % track->channels;
     drwav_uint64 next = track->position + 1 < track->frames ? track->position + 1 : track->position;
@@ -2183,6 +2185,21 @@ static void refresh_playlist(void)
     if (ratingThread) rating_request(RATING_RECITATION, L"");
 }
 
+/* A stem of the sound an instrument instance is playing would double that sound, so it
+   leaves the mix until the instance stops playing it. */
+static void mute_stems(void)
+{
+    for (int i = 0; i < stemCount; i++) {
+        int muted = 0;
+        if (stemFiles[i]) {
+            wchar_t key[16];
+            stem_key(stemFiles[i], key, 16);
+            muted = sound_live(_wtoi(key));
+        }
+        InterlockedExchange(&stems[i].muted, muted);
+    }
+}
+
 static void shuffle(int *items, int count)
 {
     for (int i = count - 1; i > 0; i--) {
@@ -3256,6 +3273,8 @@ typedef struct {
     volatile LONG instrumentCount;
     char instrument[INSTRUMENT_MAX][MAX_PATH];
     int last[INSTRUMENT_MAX];
+    volatile LONG pid[INSTRUMENT_MAX];
+    volatile LONGLONG beat[INSTRUMENT_MAX];
 } SoundList;
 
 static HANDLE soundMapping;
@@ -3329,6 +3348,42 @@ static void remember_sound(int number)
 {
     int slot = instrumentMode && instrumentName ? instrument_slot(instrumentName, 1) : -1;
     if (slot >= 0) soundList->last[slot] = number;
+}
+
+/* A running instrument instance leaves its sound and a heartbeat in its slot, so a
+   stems instance can mute the stems that sound already covers and a crashed instance
+   stops covering them within a couple of ticks. */
+static void announce_instrument(void)
+{
+    if (!instrumentMode || !instrumentName) return;
+    int slot = instrument_slot(instrumentName, 1);
+    if (slot < 0) return;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+    soundList->pid[slot] = GetCurrentProcessId();
+    soundList->beat[slot] = (LONGLONG)GetTickCount64();
+    InterlockedExchange(&soundList->lock, 0);
+}
+
+static void withdraw_instrument(void)
+{
+    open_sounds();
+    if (!soundList || !instrumentMode || !instrumentName) return;
+    int slot = instrument_slot(instrumentName, 0);
+    if (slot >= 0) soundList->pid[slot] = 0;
+}
+
+static int sound_live(int number)
+{
+    open_sounds();
+    if (!soundList || number <= 0) return 0;
+
+    ULONGLONG now = GetTickCount64();
+    int live = 0;
+    for (int i = 0; i < (int)soundList->instrumentCount && !live; i++)
+        live = soundList->pid[i] && soundList->last[i] == number &&
+               now - (ULONGLONG)soundList->beat[i] < 2000;
+    return live;
 }
 
 /* song.json sits beside [palettes], one folder above the stems folder. An instrument
@@ -4694,6 +4749,7 @@ static void shutdown_monitor(void)
     take_finish();
     recording_stop(0);
     rating_stop();
+    withdraw_instrument();
     clear_loop_cue();
     if (deviceEnumerator) {
         (*(EnumeratorVtbl **)deviceEnumerator)->Release(deviceEnumerator);
@@ -5144,6 +5200,8 @@ static int run(int argc, char **argv, const wchar_t *folder)
         ULONGLONG now = GetTickCount64();
         if (now - lastDraw >= 100) {
             g.volume = read_master_volume();
+            if (playlistMode) mute_stems();
+            else if (instrumentMode) announce_instrument();
             rating_poll();
             draw_meters();
             lastDraw = now;
