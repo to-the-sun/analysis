@@ -162,16 +162,24 @@ back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
 ## Rating and stems instances
 
 Every instance sends the audio it plays through the cumulative flux analyzer on a
-thread of its own, which scores each peak it finds. The rating is the running average
-of the scores from the last two seconds: the console's last line shows it and replaces
-it as it changes, and a new sound starts it over.
+thread of its own, with the 15 s window, four bands and cumulative score history the
+offline tools use. An instance playing a folder runs one analyzer per stem it plays;
+an instance without one running runs a single analyzer over the audio it plays. The
+analyzers of an instance share one group buffer, so their scores accumulate together
+and give the instance one rating: the running average of every score derived since the
+instance started or the sound changed. The console's last line shows it and replaces it
+as it changes.
 
-While the rating is above zero, an instance that is not playing a folder records what
-it plays into memory, and only while no other instance is playing a folder. When the
-rating falls to zero or below, or the sound changes, the recording is written as a
-16-bit PCM WAV to
-`D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]\audio.wav`,
-and a `restless_virtuoso.exe` is started on that `[stems]` folder.
+An instance playing a folder publishes its rating as the recitation rating. An
+instrument instance with one running adds one analyzer per stem that instance plays,
+all sharing a second group buffer with its own analyzer, so their scores together give
+it a separate jamming rating. It then records while the jamming rating is above the
+recitation rating, and its takes are written into that instance's `[stems]` folder.
+With no stems instance running it records while its own rating is above zero, and each
+take is written to
+`D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
+`restless_virtuoso.exe` is started on that folder. A take is named after the sound that
+played it, e.g. `3 16 drum samples.wav`.
 
 ## Notes
 
