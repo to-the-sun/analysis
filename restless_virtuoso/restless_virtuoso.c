@@ -4648,9 +4648,6 @@ static void draw_meters(void)
         length += snprintf(line + length, sizeof line - (size_t)length, "...");
 
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
-    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
-                       length ? "  " : "", rating_current(), ratingBurst);
-    if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
 
     if (playlistMode) {
         double position = playlist_position(), total = playlist_length();
@@ -4662,10 +4659,15 @@ static void draw_meters(void)
         memset(bar, '=', (size_t)filled);
         bar[24] = 0;
 
-        length += snprintf(line + length, sizeof line - (size_t)length, "  [%s] %5.1f/%5.1fs",
-                           bar, position, total);
+        int played = (int)(position + 0.5), song = (int)(total + 0.5);
+        length += snprintf(line + length, sizeof line - (size_t)length, "%s[%s] %d:%02d/%d:%02d",
+                           length ? "  " : "", bar, played / 60, played % 60, song / 60, song % 60);
         if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     }
+
+    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
+                       length ? "  " : "", rating_current(), ratingBurst);
+    if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));
         length = g.lineWidth;

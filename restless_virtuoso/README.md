@@ -199,9 +199,9 @@ lead-in of zero and moves the others' lead-ins back with it, and the song's leng
 the last lead-in plus its stem, which the console's progress bar follows. A take with
 nothing above the noise floor is not written.
 
-An instance playing a folder ends its console line with a bar of the loop, e.g.
-`[=========---------------] 12.4/32.0s`: the play position in the song over the song's
-length.
+An instance playing a folder puts a bar of the loop before its rating and score, e.g.
+`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position
+in the song over the song's length, in minutes and seconds.
 
 A WAV dropped into a folder that a stems instance is playing joins the others at the
 next loop point, aligned with them rather than at the top of the song, and the console
