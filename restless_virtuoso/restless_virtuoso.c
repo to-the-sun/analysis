@@ -371,6 +371,7 @@ typedef struct {
     drwav_uint64 frames, position;
     unsigned channels, rate;
     double fraction;
+    double wait;             /* frames left before the stem's lead-in is up */
 } Track;
 
 static wchar_t *long_path(const wchar_t *path)
@@ -428,8 +429,24 @@ static void print_wide_path(const wchar_t *path)
 
 static int playlistMode, instrumentMode;
 static volatile LONG playlistRefresh;
+#define STEM_NAME 160
+
+/* Each stem's lead-in lives in song.json, so a take carries no silence of its own: it
+   is cued that far into the loop instead. */
+typedef struct {
+    wchar_t name[STEM_NAME];
+    double lead;
+} StemLead;
+
 static wchar_t *stemFiles[QUEUE_FILES];
 static ULONGLONG stemWritten[QUEUE_FILES];
+static StemLead stemLeads[QUEUE_FILES];
+static int stemLeadCount;
+
+static void load_stem_leads(void);
+static double stem_lead(const wchar_t *file);
+static void set_stem_lead(const wchar_t *file, double lead);
+static void save_stem_leads(void);
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
@@ -738,8 +755,10 @@ static int start_playlist_w(const wchar_t *folder)
         return -1;
     }
 
+    load_stem_leads();
     for (int i = 0; i < audioFileCount; i++)
         if (decode_track(&stems[stemCount], audioFiles[i]) == 0) {
+            stems[stemCount].wait = stem_lead(audioFiles[i]) * (double)stems[stemCount].rate;
             stemWritten[stemCount] = written_time(audioFiles[i]);
             stemFiles[stemCount++] = audioFiles[i];
         }
@@ -765,7 +784,7 @@ static int start_playlist(const char *folder)
 
 static float track_sample(const Track *track, int output)
 {
-    if (!track->samples || track->position >= track->frames) return 0.0f;
+    if (!track->samples || track->position >= track->frames || track->wait > 0.0) return 0.0f;
 
     size_t channel = (size_t)output % track->channels;
     drwav_uint64 next = track->position + 1 < track->frames ? track->position + 1 : track->position;
@@ -1148,6 +1167,7 @@ typedef struct {
     float *block;
     int rate, hop, step;
     long long pushed;
+    double lead;
 } RatingCopy;
 
 static SharedTransientBuffer ratingScores;
@@ -1155,6 +1175,7 @@ static RatingCopy ratingCopies[RATING_ANALYZERS];
 static int ratingCopyCount;
 static TransientAnalyzer *ratingOwn;
 static Track *ratingStems;
+static double ratingStemLeads[QUEUE_FILES];
 static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
@@ -1261,13 +1282,14 @@ static void rating_drop(void)
     LeaveCriticalSection(&ratingLock);
 }
 
-static int rating_add(const Track *track)
+static int rating_add(const Track *track, double lead)
 {
     if (ratingCopyCount == RATING_ANALYZERS) return 0;
     if (track && (!track->samples || !track->frames || !track->rate)) return 0;
 
     RatingCopy *copy = &ratingCopies[ratingCopyCount];
     copy->track = track;
+    copy->lead = lead;
     copy->rate = track ? (int)track->rate : (int)g.rate;
     copy->hop = copy->rate / 1000;
     if (copy->hop < 1) copy->hop = 1;
@@ -1319,7 +1341,10 @@ static int rating_load(const wchar_t *folder)
     qsort(files, (size_t)count, sizeof files[0], compare_names);
     ratingStems = count ? calloc((size_t)count, sizeof *ratingStems) : NULL;
     for (int i = 0; i < count; i++) {
-        if (ratingStems && decode_track(&ratingStems[ratingStemCount], files[i]) == 0) ratingStemCount++;
+        if (ratingStems && decode_track(&ratingStems[ratingStemCount], files[i]) == 0) {
+            ratingStemLeads[ratingStemCount] = stem_lead(files[i]);
+            ratingStemCount++;
+        }
         free(files[i]);
     }
     return ratingStemCount;
@@ -1329,21 +1354,25 @@ static void rating_build(int mode, const wchar_t *folder)
 {
     rating_drop();
 
+    load_stem_leads();
+
     if (mode == RATING_RECITATION) {
-        for (int i = 0; i < stemCount; i++) rating_add(&stems[i]);
+        for (int i = 0; i < stemCount; i++)
+            rating_add(&stems[i], stemFiles[i] ? stem_lead(stemFiles[i]) : 0.0);
         return;
     }
 
     ratingOwn = analyzer_create(1.0, &ratingScores, NULL, NULL, NULL, RATING_WINDOW_MS, RATING_BANDS);
     if (mode == RATING_JAMMING && folder[0] && rating_load(folder))
-        for (int i = 0; i < ratingStemCount; i++) rating_add(&ratingStems[i]);
+        for (int i = 0; i < ratingStemCount; i++) rating_add(&ratingStems[i], ratingStemLeads[i]);
 }
 
 static void rating_copy_step(RatingCopy *copy, double elapsed, ChunkAnalysisResult *chunk)
 {
     const Track *track = copy->track;
-    int playing = elapsed > 0.0;
-    long long base = playing ? (long long)(elapsed * (double)track->rate) : 0;
+    double since = elapsed - copy->lead;
+    int playing = since > 0.0;
+    long long base = playing ? (long long)(since * (double)track->rate) : 0;
     unsigned channels = track->channels;
     drwav_uint64 frames = track->frames;
 
@@ -1795,91 +1824,13 @@ static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin
 
         double otherBegin, otherEnd;
         if (!wcscmp(otherKey, key) && _wcsicmp(other, path) &&
-            file_span(other, &otherBegin, &otherEnd) && begin < otherEnd && otherBegin < end) {
-            if (DeleteFileW(other)) log_trace("replaced %ls\n", other);
-            else log_error("Could not delete '%ls' (error %lu).\n", other, GetLastError());
+            file_span(other, &otherBegin, &otherEnd)) {
+            double otherLead = stem_lead(other);
+            if (begin < otherEnd + otherLead && otherBegin + otherLead < end) {
+                if (DeleteFileW(other)) log_trace("replaced %ls\n", other);
+                else log_error("Could not delete '%ls' (error %lu).\n", other, GetLastError());
+            }
         }
-        free(other);
-    } while (FindNextFileW(find, &entry));
-    FindClose(find);
-}
-
-/* A take that mostly lies past a loop point starts before the song's zero, which moves
-   every other stem in the folder back by the same silence. */
-static void shift_wav(const wchar_t *path, double seconds)
-{
-    const wchar_t *dot = wcsrchr(path, L'.');
-    if (!dot || (_wcsicmp(dot, L".wav") && _wcsicmp(dot, L".wave"))) {
-        log_trace("cannot pad %ls; not a wav\n", path);
-        return;
-    }
-
-    Track track;
-    memset(&track, 0, sizeof track);
-    if (decode_track(&track, path) != 0) return;
-
-    drwav_data_format format;
-    memset(&format, 0, sizeof format);
-    format.container = drwav_container_riff;
-    format.format = DR_WAVE_FORMAT_PCM;
-    format.channels = track.channels;
-    format.sampleRate = track.rate;
-    format.bitsPerSample = 16;
-
-    drwav_int16 *block = malloc((size_t)TAKE_CHUNK * sizeof *block);
-    drwav file;
-    if (!block || !drwav_init_file_write_w(&file, path, &format, NULL)) {
-        log_error("Could not pad '%ls'.\n", path);
-        free(block);
-        free(track.samples);
-        return;
-    }
-
-    drwav_uint64 silence = (drwav_uint64)(seconds * (double)track.rate);
-    memset(block, 0, (size_t)TAKE_CHUNK * sizeof *block);
-    for (drwav_uint64 done = 0; done < silence;) {
-        drwav_uint64 count = silence - done < TAKE_CHUNK ? silence - done : TAKE_CHUNK;
-        drwav_write_pcm_frames(&file, count, block);
-        done += count;
-    }
-
-    drwav_uint64 step = TAKE_CHUNK / track.channels;
-    for (drwav_uint64 done = 0; done < track.frames;) {
-        drwav_uint64 count = track.frames - done < step ? track.frames - done : step;
-        drwav_f32_to_s16(block, track.samples + (size_t)done * track.channels, (size_t)(count * track.channels));
-        drwav_write_pcm_frames(&file, count, block);
-        done += count;
-    }
-
-    drwav_uninit(&file);
-    free(block);
-    free(track.samples);
-    log_trace("padded %ls by %.3f s\n", path, seconds);
-}
-
-static void pad_stems(const wchar_t *folder, double seconds, const wchar_t *skip)
-{
-    size_t length = wcslen(folder);
-    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
-    if (!pattern) return;
-    swprintf(pattern, length + 3, L"%ls\\*", folder);
-
-    WIN32_FIND_DATAW entry;
-    HANDLE find = FindFirstFileW(pattern, &entry);
-    free(pattern);
-    if (find == INVALID_HANDLE_VALUE) return;
-
-    do {
-        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        if (!is_audio_name(entry.cFileName)) continue;
-
-        size_t nameLength = wcslen(entry.cFileName);
-        size_t pathLength = length + nameLength + 2;
-        wchar_t *other = malloc(pathLength * sizeof *other);
-        if (!other) continue;
-        swprintf(other, pathLength, L"%ls\\%ls", folder, entry.cFileName);
-
-        if (_wcsicmp(other, skip)) shift_wav(other, seconds);
         free(other);
     } while (FindNextFileW(find, &entry));
     FindClose(find);
@@ -1913,9 +1864,9 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
         else swprintf(path, 1400, L"%ls\\%ls %d.wav", folder, base, attempt);
         if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) break;
     }
-    /* The take belongs to the pass of the song it overlaps most, so it is placed from
+    /* The take belongs to the pass of the song it overlaps most, so it is cued from
        that pass's loop point rather than from the loop it happened to start in. */
-    double shift = 0.0;
+    double lead = 0.0;
     if (shared && cue && cue->length > 0.0) {
         double phase = (double)offset / (double)rate;
         double duration = (double)frames / (double)rate;
@@ -1935,24 +1886,34 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
             } else if (best > 0.0) break;
         }
 
-        double lead = phase - (double)pass * length;
-        if (lead < 0.0) {
-            shift = -lead;
-            offset = 0;
-        } else offset = (drwav_uint64)(lead * (double)rate);
+        lead = phase - (double)pass * length;
     }
 
     double begin, end;
-    if (!take_span(first, frames, rate, offset, &begin, &end)) {
+    if (!take_span(first, frames, rate, 0, &begin, &end)) {
         log_trace("take was silent; not written\n");
         return;
     }
-    if (!write_wav(path, first, frames, rate, offset)) return;
+    if (!write_wav(path, first, frames, rate, 0)) return;
 
     log_trace("recorded %ls\n", path);
-    if (shift > 0.0) pad_stems(folder, shift, path);
-    if (!shared) spawn_stems(folder);
-    else prune_stems(folder, path, begin, end);
+    if (!shared) {
+        spawn_stems(folder);
+        return;
+    }
+
+    /* A take that starts before the song's zero moves the zero back for every stem. */
+    load_stem_leads();
+    set_stem_lead(path, lead);
+
+    double lowest = 0.0;
+    for (int i = 0; i < stemLeadCount; i++)
+        if (stemLeads[i].lead < lowest) lowest = stemLeads[i].lead;
+    if (lowest < 0.0)
+        for (int i = 0; i < stemLeadCount; i++) stemLeads[i].lead -= lowest;
+    save_stem_leads();
+
+    prune_stems(folder, path, begin + lead - lowest, end + lead - lowest);
 }
 
 static void recording_stop(int spawn)
@@ -2063,6 +2024,11 @@ static void advance_tracks(void)
     int finished = 1;
     for (int i = 0; i < stemCount; i++) {
         Track *track = &stems[i];
+        if (track->wait > 0.0) {
+            track->wait -= (double)track->rate / g.rate;
+            finished = 0;
+            continue;
+        }
         if (track->position >= track->frames) continue;
 
         track->fraction += (double)track->rate / g.rate;
@@ -2101,7 +2067,8 @@ static double playlist_length(void)
 
     for (int i = 0; i < stemCount; i++) {
         if (!stems[i].rate) continue;
-        double seconds = (double)stems[i].frames / (double)stems[i].rate;
+        double lead = stemFiles[i] ? stem_lead(stemFiles[i]) : 0.0;
+        double seconds = lead + (double)stems[i].frames / (double)stems[i].rate;
         if (seconds > length) length = seconds;
     }
     return length;
@@ -2135,6 +2102,14 @@ static void refresh_playlist(void)
 
     double position = playlist_position();
     int changed = 0;
+
+    load_stem_leads();
+    for (int i = 0; i < stemCount; i++) {
+        if (!stemFiles[i] || !stems[i].frames) continue;
+        stems[i].wait = stem_lead(stemFiles[i]) * (double)stems[i].rate;
+        stems[i].position = 0;
+        stems[i].fraction = 0.0;
+    }
 
     for (int i = 0; i < stemCount; i++) {
         if (!stemFiles[i] || !stems[i].frames) continue;
@@ -2189,7 +2164,9 @@ static void refresh_playlist(void)
         }
 
         Track *track = &stems[stemCount++];
-        track->position = (drwav_uint64)(position * (double)track->rate);
+        double starts = position - stem_lead(file);
+        track->position = starts > 0.0 ? (drwav_uint64)(starts * (double)track->rate) : 0;
+        track->wait = starts > 0.0 ? 0.0 : -starts * (double)track->rate;
         track->fraction = 0.0;
         stemFiles[stemCount - 1] = file;
         stemWritten[stemCount - 1] = written_time(file);
@@ -2397,6 +2374,7 @@ static void trigger_drum(int note)
     drumVoices[note] = drums[drumVoiceDrum[note]].track;
     drumVoices[note].position = 0;
     drumVoices[note].fraction = 0;
+    drumVoices[note].wait = 0.0;
 }
 
 static void render_drums(float *dst, int outputs, int frames)
@@ -3388,6 +3366,171 @@ static const char *song_field(const char *at, char *key, size_t size)
     return skip_space(at);
 }
 
+static size_t json_span(const char *value)
+{
+    const char *at = skip_space(value);
+
+    if (*at == '"') {
+        const char *start = at++;
+        while (*at && *at != '"') {
+            if (*at == '\\' && at[1]) at++;
+            at++;
+        }
+        return (size_t)((*at ? at + 1 : at) - start);
+    }
+
+    if (*at == '{' || *at == '[') {
+        char open = *at, close = open == '{' ? '}' : ']';
+        const char *start = at;
+        int depth = 0, quoted = 0;
+        for (; *at; at++) {
+            if (quoted) {
+                if (*at == '\\' && at[1]) at++;
+                else if (*at == '"') quoted = 0;
+            } else if (*at == '"') quoted = 1;
+            else if (*at == open) depth++;
+            else if (*at == close && --depth == 0) {
+                at++;
+                break;
+            }
+        }
+        return (size_t)(at - start);
+    }
+
+    const char *start = at;
+    while (*at && *at != ',' && *at != '}' && *at != ']') at++;
+    return (size_t)(at - start);
+}
+
+static char *read_song_text(wchar_t *path, size_t size)
+{
+    if (song_path(path, size) != 0) return NULL;
+
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) return NULL;
+
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *text = length >= 0 ? malloc((size_t)length + 1) : NULL;
+    if (text) text[fread(text, 1, (size_t)length, file)] = 0;
+    fclose(file);
+    return text;
+}
+
+static void load_stem_leads(void)
+{
+    stemLeadCount = 0;
+
+    wchar_t path[1100];
+    char *text = read_song_text(path, sizeof path / sizeof *path);
+    if (!text) return;
+
+    const char *at = json_value(text, "stems");
+    at = at ? skip_space(at) : NULL;
+    if (at && *at == '{') {
+        at++;
+        for (;;) {
+            char key[STEM_NAME];
+            at = skip_space(at);
+            if (*at == '}' || !*at) break;
+
+            at = json_text(at, key, sizeof key);
+            if (!at) break;
+
+            at = skip_space(at);
+            if (*at++ != ':') break;
+            at = skip_space(at);
+
+            char *end = NULL;
+            double lead = strtod(at, &end);
+            if (end == at) break;
+            at = end;
+
+            if (stemLeadCount < QUEUE_FILES) {
+                MultiByteToWideChar(CP_UTF8, 0, key, -1, stemLeads[stemLeadCount].name, STEM_NAME);
+                stemLeads[stemLeadCount].lead = lead;
+                stemLeadCount++;
+            }
+
+            at = skip_space(at);
+            if (*at == ',') at++;
+        }
+    }
+    free(text);
+}
+
+static double stem_lead(const wchar_t *file)
+{
+    const wchar_t *base = wcsrchr(file, L'\\');
+    base = base ? base + 1 : file;
+
+    for (int i = 0; i < stemLeadCount; i++)
+        if (!_wcsicmp(stemLeads[i].name, base)) return stemLeads[i].lead;
+    return 0.0;
+}
+
+static void set_stem_lead(const wchar_t *file, double lead)
+{
+    const wchar_t *base = wcsrchr(file, L'\\');
+    base = base ? base + 1 : file;
+
+    for (int i = 0; i < stemLeadCount; i++)
+        if (!_wcsicmp(stemLeads[i].name, base)) {
+            stemLeads[i].lead = lead;
+            return;
+        }
+
+    if (stemLeadCount == QUEUE_FILES) return;
+    wcsncpy(stemLeads[stemLeadCount].name, base, STEM_NAME - 1);
+    stemLeads[stemLeadCount].name[STEM_NAME - 1] = 0;
+    stemLeads[stemLeadCount++].lead = lead;
+}
+
+static void save_stem_leads(void)
+{
+    wchar_t path[1100];
+    char *text = read_song_text(path, sizeof path / sizeof *path);
+    const char *sounds = text ? json_value(text, "sounds") : NULL;
+    const char *instruments = text ? json_value(text, "instruments") : NULL;
+    size_t soundsLength = sounds ? json_span(sounds) : 0;
+    size_t instrumentsLength = instruments ? json_span(instruments) : 0;
+
+    FILE *file = _wfopen(path, L"wb");
+    if (!file) {
+        log_error("Could not write '%ls'.\n", path);
+        free(text);
+        return;
+    }
+
+    fputs("{\n", file);
+    if (soundsLength) {
+        fputs("  \"sounds\": ", file);
+        fwrite(skip_space(sounds), 1, soundsLength, file);
+        fputs(",\n", file);
+    }
+    if (instrumentsLength) {
+        fputs("  \"instruments\": ", file);
+        fwrite(skip_space(instruments), 1, instrumentsLength, file);
+        fputs(",\n", file);
+    }
+
+    fputs("  \"stems\": {", file);
+    for (int i = 0; i < stemLeadCount; i++) {
+        char name[STEM_NAME * 2];
+        WideCharToMultiByte(CP_UTF8, 0, stemLeads[i].name, -1, name, sizeof name, NULL, NULL);
+        fputs(i ? ",\n    " : "\n    ", file);
+        json_write_text(file, name);
+        fprintf(file, ": %.6f", stemLeads[i].lead);
+    }
+    fprintf(file, "%s}\n}\n", stemLeadCount ? "\n  " : "");
+
+    if (ferror(file)) log_error("Could not write '%ls'.\n", path);
+    else log_trace("wrote %ls\n", path);
+    fclose(file);
+    free(text);
+}
+
 /* The sounds are keyed by their number and written in that order, so a number names the
    same sound in every take. A drum sound carries the seed that draws its set. */
 static int load_song_sounds(const char *object, char **names, int **seeds)
@@ -3536,6 +3679,10 @@ static void save_song(void)
     open_sounds();
     if (!songLive || !songReady || !soundList || song_path(path, sizeof path / sizeof *path) != 0) return;
 
+    char *existing = read_song_text(path, sizeof path / sizeof *path);
+    const char *leads = existing ? json_value(existing, "stems") : NULL;
+    size_t leadsLength = leads ? json_span(leads) : 0;
+
     FILE *file = _wfopen(path, L"wb");
     if (!file) {
         log_error("Could not write '%ls'.\n", path);
@@ -3560,10 +3707,16 @@ static void save_song(void)
         json_write_text(file, soundList->instrument[i]);
         fprintf(file, ", \"sound\": %d }", soundList->last[i]);
     }
-    fprintf(file, "%s]\n}\n", instruments ? "\n  " : "");
+    fprintf(file, "%s]", instruments ? "\n  " : "");
+    if (leadsLength) {
+        fputs(",\n  \"stems\": ", file);
+        fwrite(skip_space(leads), 1, leadsLength, file);
+    }
+    fputs("\n}\n", file);
 
     int failed = ferror(file);
     fclose(file);
+    free(existing);
     InterlockedExchange(&soundList->lock, 0);
     if (failed) log_error("Could not write '%ls'.\n", path);
     else log_trace("wrote %ls\n", path);

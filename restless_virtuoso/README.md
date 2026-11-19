@@ -148,7 +148,8 @@ the single line `0, 0.000000 other;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
-instrument was last on. Every running
+instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
+seconds (`"3 16 drum samples.wav": 1.250000`). Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
 that has already closed still has its sound saved. An instance started on a song with a
@@ -191,10 +192,12 @@ take is written to
 `restless_virtuoso.exe` is started on that folder. A take is named after the sound that
 played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs is
 placed from the loop point of the pass it overlaps most, as the song builder places a
-pattern in its pass, so the audio lands where it was played in the song. A take that
-mostly lies past a loop point starts before the song's zero: the other stems get the
-same silence added to their head, the stems instance reloads them at its next loop, and
-the console names each one. A take with nothing above the noise floor is not written.
+pattern in its pass, so the audio lands where it was played in the song. That placement
+is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
+cued that far into each loop, a take that mostly lies past a loop point carries a
+lead-in of zero and moves the others' lead-ins back with it, and the song's length is
+the last lead-in plus its stem, which the console's progress bar follows. A take with
+nothing above the noise floor is not written.
 
 An instance playing a folder ends its console line with a bar of the loop, e.g.
 `[=========---------------] 12.4/32.0s`: the play position in the song over the song's
