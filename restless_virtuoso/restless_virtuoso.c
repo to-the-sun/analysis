@@ -42,7 +42,7 @@
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
     char instrument[MAX_PATH], samplesPath[MAX_PATH], vstsPath[MAX_PATH];
-    int rate, buffer, synth, list, inputChannel, samplesRatio;
+    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale;
 } Options;
 
 typedef struct {
@@ -250,6 +250,76 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *info)
 
 static volatile uint32_t midiHead, midiTail;
 static uint32_t midiQueue[MIDI_QUEUE];
+
+typedef struct {
+    const char *name, *pitches;
+} Scale;
+
+static const Scale scales[] = {
+    {"major (Ionian)", "C D E F G A B"},
+    {"Dorian", "C D Eb F G A Bb"},
+    {"Phrygian", "C Db Eb F G Ab Bb"},
+    {"Lydian", "C D E F# G A B"},
+    {"Mixolydian", "C D E F G A Bb"},
+    {"natural minor (Aeolian)", "C D Eb F G Ab Bb"},
+    {"Locrian", "C Db Eb F Gb Ab Bb"},
+    {"harmonic minor", "C D Eb F G Ab B"},
+    {"Locrian natural 6", "C Db Eb F Gb A Bb"},
+    {"Ionian sharp 5", "C D E F G# A B"},
+    {"Dorian sharp 4", "C D Eb F# G A Bb"},
+    {"Phrygian dominant", "C Db E F G Ab Bb"},
+    {"Lydian sharp 2", "C D# E F# G A B"},
+    {"ultralocrian", "C Db Eb Fb Gb Ab A"},
+    {"melodic minor", "C D Eb F G A B"},
+    {"Dorian flat 2", "C Db Eb F G A Bb"},
+    {"Lydian augmented", "C D E F# G# A B"},
+    {"Lydian dominant", "C D E F# G A Bb"},
+    {"Mixolydian flat 6", "C D E F G# A Bb"},
+    {"Locrian natural 2", "C D Eb F Gb Ab Bb"},
+    {"altered", "C Db Eb Fb Gb Ab Bb"},
+    {"major pentatonic", "C D E G A"},
+    {"minor pentatonic", "C Eb F G Bb"},
+    {"suspended pentatonic", "C D F G Bb"},
+    {"blues", "C Eb F Gb G Bb"},
+    {"major blues", "C D Eb E G A"},
+    {"whole tone", "C D E F# G# Bb"},
+    {"diminished", "C D Eb F Gb Ab A B"},
+    {"dominant diminished", "C Db Eb E F# G A Bb"},
+    {"harmonic major", "C D E F G Ab B"},
+    {"double harmonic", "C Db E F G Ab B"},
+    {"Hungarian minor", "C D Eb F# G Ab B"},
+    {"Neapolitan minor", "C Db Eb F G Ab B"},
+    {"Neapolitan major", "C Db Eb F G A B"},
+    {"enigmatic", "C Db E F# G# Bb B"},
+};
+
+static unsigned scaleMask;
+
+static unsigned scale_mask(const char *pitches)
+{
+    static const char letters[] = "CDEFGAB";
+    static const int semitones[] = {0, 2, 4, 5, 7, 9, 11};
+    unsigned mask = 0;
+
+    for (const char *c = pitches; *c; c++) {
+        const char *letter = *c >= 'A' && *c <= 'G' ? strchr(letters, *c) : NULL;
+        if (!letter) continue;
+
+        int semitone = semitones[letter - letters];
+        while (c[1] == '#' || c[1] == 'b') semitone += *++c == '#' ? 1 : -1;
+        mask |= 1u << ((semitone % 12 + 12) % 12);
+    }
+    return mask;
+}
+
+static int scale_note(int note)
+{
+    for (int pitch = note; pitch >= 0; pitch--)
+        if (scaleMask >> (pitch % 12) & 1) return pitch;
+    for (int pitch = note; pitch < 128; pitch++)
+        if (scaleMask >> (pitch % 12) & 1) return pitch;
+    return note;
+}
 
 #define VST_MAX_PLUGINS 1024
 #define VST_MAX_EVENTS 256
@@ -3043,6 +3113,7 @@ static int save_settings(const char *path, const Options *options)
         json_write_text(file, options->vstsPath);
         fprintf(file, ",\n");
     }
+    if (options->randomScale) fprintf(file, "  \"random_scale\": 1,\n");
     fprintf(file, "  \"samples_ratio\": %d,\n  \"taste\": {\n    \"samples\": {", options->samplesRatio);
 
     int drumsWritten = write_drums(file, options->samplesPath[0] && !drumCount);
@@ -4178,6 +4249,10 @@ static void CALLBACK midi_in_proc(HMIDIIN handle, UINT message, DWORD_PTR instan
     int channel = (int)(data & 0x0f) + 1;
     if (g.midiChannel && channel != g.midiChannel) return;
 
+    int status = (int)(data & 0xf0);
+    if (scaleMask && (status == 0x80 || status == 0x90 || status == 0xa0))
+        data = (data & 0xffff00ffu) | (uint32_t)scale_note((int)(data >> 8) & 0x7f) << 8;
+
     if (g.midiStream)
         log_line("MIDI ch %d  %02X %02X %02X", channel, (int)(data & 0xff),
                  (int)(data >> 8) & 0x7f, (int)(data >> 16) & 0x7f);
@@ -4907,6 +4982,9 @@ static int load_settings(const char *path, Options *options)
         const char *ratio = json_value(text, "samples_ratio");
         options->samplesRatio = ratio ? atoi(ratio) : 50;
 
+        const char *scale = json_value(text, "random_scale");
+        options->randomScale = scale && atoi(scale) == 1;
+
         const char *channel = json_value(text, "input-channel");
         char *stop = NULL;
         long number = channel ? strtol(channel, &stop, 10) : 0;
@@ -5001,6 +5079,12 @@ static int run(int argc, char **argv, const wchar_t *folder)
     g.samplesRatio = options.samplesRatio;
     g.midiInIndex = -1;
     g.midiOutIndex = -1;
+
+    if (options.randomScale) {
+        const Scale *scale = &scales[rand() % (int)(sizeof scales / sizeof *scales)];
+        scaleMask = scale_mask(scale->pitches);
+        log_line("random scale: %s (%s)", scale->name, scale->pitches);
+    }
 
     callbacks.bufferSwitch = on_buffer_switch;
     callbacks.sampleRateDidChange = on_sample_rate_changed;

@@ -103,6 +103,11 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   comes from `samples_path` instead of `vsts_path` when both are loaded. Only one of
   them plays, and MIDI reaches only that one: note-ons trigger drum samples only
   while a drum sound is drawn, and reach the plugin only while a VST preset is.
+- `random_scale` is 1 to draw one of the named scales of Western music at random when
+  the instance starts, and 0 (default) for none. Note-ons, note-offs and aftertouch are
+  moved to the nearest pitch of that scale as the MIDI input arrives, so the sine synth,
+  the drum samples, the VST and the MIDI output only hear notes from it. The chosen
+  scale and its pitches are printed at startup.
 - `taste` holds, in whole seconds, how long each drum sample and each preset of
   each plugin has sounded above -60 dBFS. A second counts in full if the sound
   peaked above the gate anywhere in it. Every entry starts at 1; `new sound` draws
