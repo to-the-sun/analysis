@@ -1110,6 +1110,7 @@ static void take_finish(void)
 #define RATING_WINDOW_MS 15000
 #define RATING_BANDS 4
 #define RATING_ANALYZERS 32
+#define RATING_STEPS (RATING_WINDOW_MS / 100)
 #define RATING_PROJECTS L"D:\\[Library]\\[Audio]\\[Works]\\[Projects]"
 
 enum { RATING_SOLO, RATING_RECITATION, RATING_JAMMING };
@@ -1135,6 +1136,10 @@ static int ratingStemCount;
 static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
 static volatile double ratingValue, ratingBurst;
+static struct { double sum; int count; } ratingSteps[RATING_STEPS];
+static int ratingStepHead, ratingStepCount;
+static double ratingSum;
+static int ratingCount;
 static CRITICAL_SECTION ratingLock;
 static float *ratingFeed;
 static int ratingFeedSize, ratingHead, ratingTail, ratingCount;
@@ -1224,6 +1229,8 @@ static void rating_drop(void)
     ratingScores.max_score_seen = -DBL_MAX;
     ratingValue = 0.0;
     ratingBurst = 0.0;
+    ratingStepHead = ratingStepCount = ratingCount = 0;
+    ratingSum = 0.0;
 
     EnterCriticalSection(&ratingLock);
     ratingCount = ratingHead = ratingTail = 0;
@@ -1403,10 +1410,23 @@ static DWORD WINAPI rating_worker(void *unused)
         }
         for (int i = 0; i < ratingCopyCount; i++) rating_copy_step(&ratingCopies[i], elapsed, chunk);
 
-        ratingValue = ratingScores.score_count > 0
-                      ? ratingScores.total_score_sum / ratingScores.score_count : 0.0;
+        double sum = ratingScores.total_score_sum - sumBefore;
         int count = ratingScores.score_count - countBefore;
-        ratingBurst = count > 0 ? (ratingScores.total_score_sum - sumBefore) / count : 0.0;
+        ratingBurst = count > 0 ? sum / count : 0.0;
+
+        if (ratingStepCount == RATING_STEPS) {
+            ratingSum -= ratingSteps[ratingStepHead].sum;
+            ratingCount -= ratingSteps[ratingStepHead].count;
+        } else {
+            ratingStepCount++;
+        }
+        ratingSteps[ratingStepHead].sum = sum;
+        ratingSteps[ratingStepHead].count = count;
+        ratingStepHead = (ratingStepHead + 1) % RATING_STEPS;
+        ratingSum += sum;
+        ratingCount += count;
+
+        ratingValue = ratingCount > 0 ? ratingSum / ratingCount : 0.0;
         if (playlistMode && cue && cue->pid == GetCurrentProcessId()) cue->rating = ratingValue;
     }
 

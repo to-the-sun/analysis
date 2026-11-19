@@ -166,9 +166,10 @@ thread of its own, with the 15 s window, four bands and cumulative score history
 offline tools use. An instance playing a folder runs one analyzer per stem it plays;
 an instance without one running runs a single analyzer over the audio it plays. The
 analyzers of an instance share one group buffer, so their scores accumulate together
-and give the instance one rating: the running average of every score derived since the
-instance started or the sound changed. The console's last line shows it and replaces it
-as it changes, beside a `score`: the average of the scores from the last 100 ms only.
+and give the instance one rating: the average of the scores from the last 15 s of
+audio, rolling. In an instrument instance the group starts again with a new sound, so
+the rating does too. The console's last line shows it and replaces it as it changes,
+beside a `score`: the average of the scores from the last 100 ms only.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
