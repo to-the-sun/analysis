@@ -2765,9 +2765,18 @@ static void init_vst_taste(int library)
     vstLibraryLow[library] = stats ? stats->low : 0;
     vstLibraryHigh[library] = stats ? stats->high : 127;
 
+    /* A wrap over a span that is not whole octaves changes the pitch class, so the
+       range is taken inward to the nearest one. */
+    int span = vstLibraryHigh[library] - vstLibraryLow[library] + 1;
+    if (span >= 12) {
+        int excess = span % 12;
+        vstLibraryLow[library] += excess / 2;
+        vstLibraryHigh[library] -= excess - excess / 2;
+    }
+
     char line[192];
-    if (stats) snprintf(line, sizeof line, "  %s: range %d-%d", vstNames[library], stats->low, stats->high);
-    else snprintf(line, sizeof line, "  warning: no stats entry for %s, range 0-127", vstNames[library]);
+    if (stats) snprintf(line, sizeof line, "  %s: range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
+    else snprintf(line, sizeof line, "  warning: no stats entry for %s, range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
     console_line(line);
 
     int count = vstLibraryPresets[library];
