@@ -75,7 +75,9 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   plays it.
 - `vsts_path` loads every 64-bit VST 2 `.dll` under the folder and its subfolders,
   then plays a preset drawn by the taste lottery from one pool holding every preset
-  of every plugin. Plugins without factory presets keep their default.
+  of every plugin. Plugins without factory presets keep their default. A plugin is
+  opened once and kept open, inactive while another sound plays, so a sound change
+  only switches the preset of an instance that is already there.
   `vsti_stats.txt` in that folder supplies the real preset count and MIDI range for
   each plugin:
 

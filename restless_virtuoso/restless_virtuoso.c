@@ -2266,6 +2266,7 @@ static void render_drums(float *dst, int outputs, int frames)
 static HMODULE vstLibraries[VST_MAX_PLUGINS];
 static char vstNames[VST_MAX_PLUGINS][VST_NAME];
 static int vstLibraryCount, vstActiveLibrary = -1, vstOutputCount, vstProgram, vstPresetCount;
+static AEffect *vstInstances[VST_MAX_PLUGINS];
 static int vstLibraryPresets[VST_MAX_PLUGINS], vstLibraryLow[VST_MAX_PLUGINS], vstLibraryHigh[VST_MAX_PLUGINS];
 static int *vstTastes[VST_MAX_PLUGINS];
 static int vstTasted, vstTasteLibrary = -1, vstTasteProgram;
@@ -2437,19 +2438,28 @@ static void send_vst_program_change(int program)
     vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, &events, 0);
 }
 
+/* One instance per plugin is kept for the life of the program: a sound change
+   activates an instance that is already open instead of destroying it and building
+   it again, which some plugins report on the console and all of them pay for in load
+   time. Only the active instance is processed. */
 static int start_vst(int library, int program)
 {
-    AEffect *effect = create_effect(vstLibraries[library]);
+    int fresh = vstInstances[library] == NULL;
+    AEffect *effect = fresh ? create_effect(vstLibraries[library]) : vstInstances[library];
     if (!effect) return -1;
 
-    if (!effect->dispatcher || (!(effect->flags & effFlagsIsSynth) && effect->numInputs > 0) ||
-        effect->numOutputs < 1 || effect->numOutputs > VST_MAX_OUTPUTS ||
-        (!effect->processReplacing && !effect->process)) {
-        effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
-        return -1;
+    if (fresh) {
+        if (!effect->dispatcher || (!(effect->flags & effFlagsIsSynth) && effect->numInputs > 0) ||
+            effect->numOutputs < 1 || effect->numOutputs > VST_MAX_OUTPUTS ||
+            (!effect->processReplacing && !effect->process)) {
+            effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+            return -1;
+        }
+
+        effect->dispatcher(effect, effOpen, 0, 0, NULL, 0);
+        vstInstances[library] = effect;
     }
 
-    effect->dispatcher(effect, effOpen, 0, 0, NULL, 0);
     vstEffect = effect;
     vstActiveLibrary = library;
     vstOutputCount = effect->numOutputs;
@@ -2467,9 +2477,12 @@ static int start_vst(int library, int program)
 
     if (vst_start() != 0) {
         vst_stop();
-        effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
         vstEffect = NULL;
         vstActiveLibrary = -1;
+        if (fresh) {
+            effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+            vstInstances[library] = NULL;
+        }
         return -1;
     }
     if (vstPresetCount > 1) send_vst_program_change(vstProgram);
@@ -2990,15 +3003,22 @@ static void render_instruments(float *dst, int outputs, int frames)
     else render_vst(dst, outputs, frames);
 }
 
-static void close_vst_effect(void)
+static void suspend_vst_effect(void)
 {
     taste_flush();
     vst_stop();
-    if (vstEffect) {
-        vstEffect->dispatcher(vstEffect, effClose, 0, 0, NULL, 0);
-        vstEffect = NULL;
-    }
+    vstEffect = NULL;
     vstActiveLibrary = -1;
+}
+
+static void close_vst_effect(void)
+{
+    suspend_vst_effect();
+    for (int i = 0; i < VST_MAX_PLUGINS; i++) {
+        if (!vstInstances[i]) continue;
+        vstInstances[i]->dispatcher(vstInstances[i], effClose, 0, 0, NULL, 0);
+        vstInstances[i] = NULL;
+    }
 }
 
 /* One draw over every preset of every plugin, so a plugin's share of the lottery is
@@ -3052,7 +3072,7 @@ static void new_vst_sound(void)
         g.started = 0;
     }
 
-    close_vst_effect();
+    suspend_vst_effect();
     start_drawn_vst();
 
     if (g.asio->vtable->start(g.asio) != ASE_OK) {
@@ -3427,6 +3447,7 @@ static int restore_sound(int number)
 
     if (strstr(name, " drum samples")) {
         if (!drumCount) return -1;
+        if (vstEffect) suspend_vst_effect();
         seed_drums(seed);
         g.samplesSound = 1;
         assign_drums();
@@ -3461,7 +3482,7 @@ static int restore_sound(int number)
         g.asio->vtable->stop(g.asio);
         g.started = 0;
     }
-    close_vst_effect();
+    suspend_vst_effect();
     if (start_vst(library, preset - 1) != 0) log_error("Could not start the plugin for the sound '%s'.\n", name);
     else {
         vstOctave = octave;
