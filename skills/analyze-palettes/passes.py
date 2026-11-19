@@ -9,7 +9,7 @@ A sounds file, when present, holds one line per sound change,
 ``index, milliseconds number mode;``, where number names a drum set or VST
 preset and mode is ``samples`` or ``synth``; an older file may give the number
 alone, leaving mode unknown. A line with no number,
-``index, milliseconds other;``, marks a device that applies no sound.
+``index, milliseconds audio;``, marks a device that applies no sound.
 """
 import os
 

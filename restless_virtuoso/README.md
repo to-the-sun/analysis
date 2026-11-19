@@ -75,7 +75,9 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   plays it.
 - `vsts_path` loads every 64-bit VST 2 `.dll` under the folder and its subfolders,
   then plays a preset drawn by the taste lottery from one pool holding every preset
-  of every plugin. Plugins without factory presets keep their default.
+  of every plugin. Plugins without factory presets keep their default. A plugin is
+  opened once and kept open, inactive while another sound plays, so a sound change
+  only switches the preset of an instance that is already there.
   `vsti_stats.txt` in that folder supplies the real preset count and MIDI range for
   each plugin:
 
@@ -86,10 +88,14 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   }
   ```
 
-  Entries are named by their `.dll` file name or the plugin's own name,
-  case-insensitive. `presets` is how many presets the plugin actually has, and
+    Each plugin's range is printed as it loads, and a plugin with no entry is named in a
+  warning and left at 0-127. Entries are named by their `.dll` file name or the
+  plugin's own name, case-insensitive. `presets` is how many presets the plugin
+  actually has, and
   random presets are drawn from it instead of the count the plugin reports. `range`
-  is the MIDI notes the plugin handles: notes outside it wrap around into it. Every
+  is the MIDI notes the plugin handles: notes outside it wrap around into it, and the
+  range is taken inward to a whole number of octaves so a wrapped note keeps its pitch
+  class. Every
   `new sound` on a VST also shifts all its notes by a random -6 to +6 octaves before
   that wrap, enough to move middle C anywhere in 0-127. `vst_stats.txt` is read when
   `vsti_stats.txt` is not there.
@@ -138,11 +144,12 @@ each `new sound`, timed from the take's start; `mode` is `samples` for a drum sa
 set and `synth` for a VST preset. Every running instance shares one numbered list of
 sounds, so a number identifies a drum sample set or VST preset in every take, and the
 console prints the number with the description. A take with no sound applied holds
-the single line `0, 0.000000 other;`.
+the single line `0, 0.000000 audio;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
-instrument was last on. Every running
+instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
+seconds (`"3 16 drum samples.wav": 1.250000`). Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
 that has already closed still has its sound saved. An instance started on a song with a
@@ -158,6 +165,56 @@ In instrument mode, left-click anywhere in the console to move up to the next sh
 sound, or to draw a new one when it is already on the highest, and right-click to move
 back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
 `samples_ratio`.
+
+## Rating and stems instances
+
+Every instance sends the audio it plays through the cumulative flux analyzer on a
+thread of its own, with the 15 s window, four bands and cumulative score history the
+offline tools use. An instance playing a folder runs one analyzer per stem it plays;
+an instance without one running runs a single analyzer over the audio it plays. The
+analyzers of an instance share one group buffer, so their scores accumulate together
+and give the instance one rating: the average of the scores from the last 15 s of
+audio, rolling. In an instrument instance the group starts again with a new sound, so
+the rating does too. The console's last line shows it and replaces it as it changes,
+beside a `score`: the last 100 ms of scores, but from the instance's own side only —
+its stems when it plays a folder, its own audio when it has an analyzer of it.
+
+An instance playing a folder publishes its rating as the recitation rating. An
+instrument instance with one running adds one analyzer per stem that instance plays,
+all sharing a second group buffer with its own analyzer, so their scores together give
+it a separate jamming rating. It then records while the jamming rating is above the
+recitation rating, and its takes are written into that instance's `[stems]` folder.
+Closing that instance drops the take in progress and its memory instead of writing it
+as a project of its own, and the rating starts again from zero.
+With no stems instance running it records while its own rating is above zero, and each
+take is written to
+`D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
+`restless_virtuoso.exe` is started on that folder. A take is named after the sound that
+played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs is
+placed from the loop point of the pass it overlaps most, as the song builder places a
+pattern in its pass, so the audio lands where it was played in the song. That placement
+is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
+cued that far into each loop, a take that mostly lies past a loop point carries a
+lead-in of zero and moves the others' lead-ins back with it, and the song's length is
+the last lead-in plus its stem, which the console's progress bar follows. A take with
+nothing above the noise floor is not written.
+
+An instance playing a folder puts a bar of the loop before its rating and score, e.g.
+`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position
+in the song over the song's length, in minutes and seconds.
+
+A WAV dropped into a folder that a stems instance is playing joins the others at the
+next loop point, aligned with them rather than at the top of the song, and the console
+prints its name and how many stems are playing. A stem whose file has gone stops
+playing at that point and is named the same way, as `dropped`.
+
+Stems collide as their sounds' modes do: every drum sample set collides with every
+other, a VST preset only with the same sound number, and an `audio` take, which has no
+sound number, with every other `audio` take. A take whose active audio overlaps an
+older stem it collides with deletes that file, and the stems instance drops it from
+the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
+the live instance is the only voice of that sound, and plays them again when that
+instance stops or changes sound.
 
 ## Notes
 
