@@ -976,8 +976,8 @@ def build_report(spec, out_dir, src_dir, shift=0.0):
                 marks = ([active[-1]] if active else []) + \
                         [m for m in sounds if p['start'] < m['time'] < p['end']]
                 for mark in marks:
-                    value = mark['mode'] if mark['number'] is None else \
-                        '%d %s' % (mark['number'], mark['mode'])
+                    value = ' '.join(str(v) for v in (mark['number'], mark['mode'])
+                                     if v is not None)
                     f.write('%d, %.6f %s;\n' % (
                         index, (seam / sr + max(0.0, mark['time'] - p['start'])) * 1000.0,
                         value))
