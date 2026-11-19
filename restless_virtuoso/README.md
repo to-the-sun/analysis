@@ -168,7 +168,7 @@ an instance without one running runs a single analyzer over the audio it plays. 
 analyzers of an instance share one group buffer, so their scores accumulate together
 and give the instance one rating: the running average of every score derived since the
 instance started or the sound changed. The console's last line shows it and replaces it
-as it changes.
+as it changes, beside a `score`: the average of the scores from the last 100 ms only.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,

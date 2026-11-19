@@ -1134,7 +1134,7 @@ static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
-static volatile double ratingValue;
+static volatile double ratingValue, ratingBurst;
 static CRITICAL_SECTION ratingLock;
 static float *ratingFeed;
 static int ratingFeedSize, ratingHead, ratingTail, ratingCount;
@@ -1223,6 +1223,7 @@ static void rating_drop(void)
     ratingScores.min_score_seen = DBL_MAX;
     ratingScores.max_score_seen = -DBL_MAX;
     ratingValue = 0.0;
+    ratingBurst = 0.0;
 
     EnterCriticalSection(&ratingLock);
     ratingCount = ratingHead = ratingTail = 0;
@@ -1389,6 +1390,8 @@ static DWORD WINAPI rating_worker(void *unused)
         filled = 0;
 
         double elapsed = rating_elapsed();
+        double sumBefore = ratingScores.total_score_sum;
+        int countBefore = ratingScores.score_count;
 
         if (ratingOwn) {
             int active = (int)(pushed - rate / 5);
@@ -1402,6 +1405,8 @@ static DWORD WINAPI rating_worker(void *unused)
 
         ratingValue = ratingScores.score_count > 0
                       ? ratingScores.total_score_sum / ratingScores.score_count : 0.0;
+        int count = ratingScores.score_count - countBefore;
+        ratingBurst = count > 0 ? (ratingScores.total_score_sum - sumBefore) / count : 0.0;
         if (playlistMode && cue && cue->pid == GetCurrentProcessId()) cue->rating = ratingValue;
     }
 
@@ -4245,8 +4250,8 @@ static void draw_meters(void)
         length += snprintf(line + length, sizeof line - (size_t)length, "...");
 
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
-    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f",
-                       length ? "  " : "", rating_current());
+    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
+                       length ? "  " : "", rating_current(), ratingBurst);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));
