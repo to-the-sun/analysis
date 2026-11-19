@@ -833,17 +833,16 @@ static void publish_palette(const wchar_t *stems)
 
     size_t length = wcslen(stems);
     while (length > 3 && (stems[length - 1] == L'\\' || stems[length - 1] == L'/')) length--;
-    while (length > 3 && stems[length - 1] != L'\\') length--;
-    if (stems[length - 1] != L'\\' || length + 12 > sizeof cue->folder / sizeof *cue->folder) return;
+    if (length >= sizeof cue->stems / sizeof *cue->stems) return;
 
     size_t folder = length;
-    while (folder > 3 && (stems[folder - 1] == L'\\' || stems[folder - 1] == L'/')) folder--;
-    if (folder >= sizeof cue->stems / sizeof *cue->stems) return;
+    while (folder > 3 && stems[folder - 1] != L'\\') folder--;
+    if (stems[folder - 1] != L'\\' || folder + 12 > sizeof cue->folder / sizeof *cue->folder) return;
 
-    wmemcpy(cue->stems, stems, folder);
-    cue->stems[folder] = 0;
-    wmemcpy(cue->folder, stems, length);
-    wcscpy(cue->folder + length, L"[palettes]\\");
+    wmemcpy(cue->stems, stems, length);
+    cue->stems[length] = 0;
+    wmemcpy(cue->folder, stems, folder);
+    wcscpy(cue->folder + folder, L"[palettes]\\");
     cue->rating = 0.0;
     cue->qpc = 0;
     cue->pid = GetCurrentProcessId();
