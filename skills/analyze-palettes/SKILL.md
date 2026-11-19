@@ -453,10 +453,10 @@ Guarantees:
 
 The page plays the master or all stems in sync, seeks, mutes individual stems,
 and draws one arrangement row per stem, labelled with its pattern's length and
-the sound number and mode (`samples`, `synth` or `other`) it was played with. Drag horizontally on a row to zoom,
-right-click to zoom out, Reset Zoom to return, and click to jump and play. Gray
-vertical guides mark the other pass loop points; a bold white line marks the
-shared song anchor on every row.
+the sound number and mode (`samples`, `synth` or `other`) it was played with.
+Drag horizontally on a row to zoom, right-click to zoom out, Reset Zoom to
+return, and click to jump and play. Gray vertical guides mark the other pass
+loop points; a bold white line marks the shared song anchor on every row.
 
 Song-level checks:
 
