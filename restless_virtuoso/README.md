@@ -179,7 +179,12 @@ With no stems instance running it records while its own rating is above zero, an
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
 `restless_virtuoso.exe` is started on that folder. A take is named after the sound that
-played it, e.g. `3 16 drum samples.wav`.
+played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs
+begins with silence from that instance's last loop point, so the audio lands where it
+was played in the song.
+
+A WAV dropped into a folder that a stems instance is playing joins the others at the
+next loop point, aligned with them rather than at the top of the song.
 
 ## Notes
 
