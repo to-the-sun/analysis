@@ -159,6 +159,20 @@ sound, or to draw a new one when it is already on the highest, and right-click t
 back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
 `samples_ratio`.
 
+## Rating and stems instances
+
+Every instance sends the audio it plays through the cumulative flux analyzer on a
+thread of its own, which scores each peak it finds. The rating is the running average
+of the scores from the last two seconds: the console's last line shows it and replaces
+it as it changes, and a new sound starts it over.
+
+While the rating is above zero, an instance that is not playing a folder records what
+it plays into memory, and only while no other instance is playing a folder. When the
+rating falls to zero or below, or the sound changes, the recording is written as a
+16-bit PCM WAV to
+`D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]\audio.wav`,
+and a `restless_virtuoso.exe` is started on that `[stems]` folder.
+
 ## Notes
 
 - 64-bit Windows only; ASIO drivers are loaded in-process, so the driver must be 64-bit.
