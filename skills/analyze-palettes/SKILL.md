@@ -84,10 +84,11 @@ across patterns or across the file. Measure each region on its own terms.
 
    A `sounds_<stamp>.txt` beside the palette is optional. It holds one
    `index, milliseconds number mode;` line per sound change, where `mode` is
-   `samples` for a drum sample set, `synth` for a VST preset (the default), or
-   the line has no number and reads `index, milliseconds other;` for a device
-   that applies no sound. Each pattern takes the mark it overlaps most; without
-   the file every pattern's `sound` and `mode` are `null`.
+   `samples` for a drum sample set or `synth` for a VST preset; an older file
+   may give only the number, leaving `mode` `null`. A line with no number reads
+   `index, milliseconds other;` and marks a device that applies no sound. Each
+   pattern takes the mark it overlaps most; without the file every pattern's
+   `sound` and `mode` are `null`.
 6. Create a workspace output directory, for example
    `artifacts/<batch>/pattern_reports`. Keep generated data with the reports;
    the song master is written one level up, beside the report folder.
