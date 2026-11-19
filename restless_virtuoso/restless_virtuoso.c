@@ -429,6 +429,7 @@ static void print_wide_path(const wchar_t *path)
 static int playlistMode, instrumentMode;
 static volatile LONG playlistRefresh;
 static wchar_t *stemFiles[QUEUE_FILES];
+static ULONGLONG stemWritten[QUEUE_FILES];
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
@@ -452,6 +453,17 @@ static int is_audio_name(const wchar_t *name)
     for (size_t i = 0; i < sizeof audioExtensions / sizeof *audioExtensions; i++)
         if (!_wcsicmp(dot, audioExtensions[i])) return 1;
     return 0;
+}
+
+static ULONGLONG written_time(const wchar_t *path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &data)) return 0;
+
+    ULARGE_INTEGER value;
+    value.LowPart = data.ftLastWriteTime.dwLowDateTime;
+    value.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    return value.QuadPart;
 }
 
 static int scan_audio_files(const wchar_t *folder)
@@ -727,7 +739,10 @@ static int start_playlist_w(const wchar_t *folder)
     }
 
     for (int i = 0; i < audioFileCount; i++)
-        if (decode_track(&stems[stemCount], audioFiles[i]) == 0) stemFiles[stemCount++] = audioFiles[i];
+        if (decode_track(&stems[stemCount], audioFiles[i]) == 0) {
+            stemWritten[stemCount] = written_time(audioFiles[i]);
+            stemFiles[stemCount++] = audioFiles[i];
+        }
 
     if (!stemCount) {
         log_error("Every audio file in the folder failed to decode.\n");
@@ -769,6 +784,8 @@ typedef struct {
     wchar_t folder[1024];
     wchar_t stems[1024];
     volatile LONG stems_count;
+    volatile LONG generation;
+    volatile double length;
     volatile double rating;
 } LoopCue;
 
@@ -818,6 +835,8 @@ static void open_cue(void)
     if (cue) take.seen = InterlockedCompareExchange(&cue->seq, 0, 0);
 }
 
+static double playlist_length(void);
+
 static void send_loop_start(void)
 {
     open_cue();
@@ -826,6 +845,7 @@ static void send_loop_start(void)
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     cue->qpc = now.QuadPart;
+    cue->length = playlist_length();
     take.seen = InterlockedIncrement(&cue->seq);
 }
 
@@ -847,6 +867,8 @@ static void publish_palette(const wchar_t *stems)
     wmemcpy(cue->folder, stems, folder);
     wcscpy(cue->folder + folder, L"[palettes]\\");
     cue->stems_count = stemCount;
+    cue->generation = 0;
+    cue->length = playlist_length();
     cue->rating = 0.0;
     cue->qpc = 0;
     cue->pid = GetCurrentProcessId();
@@ -947,6 +969,8 @@ static void clear_loop_cue(void)
     cue->qpc = 0;
     cue->rating = 0.0;
     cue->stems_count = 0;
+    cue->generation = 0;
+    cue->length = 0.0;
     cue->folder[0] = 0;
     cue->stems[0] = 0;
 }
@@ -1148,7 +1172,7 @@ static int ratingSound, ratingStarted;
 static volatile LONG ratingRequest, ratingLoop;
 static int ratingRequestMode;
 static wchar_t ratingRequestFolder[1024];
-static int ratingRequestedMode = -1, ratingRequestedStems;
+static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
 static wchar_t ratingRequestedFolder[1024];
 
 typedef struct {
@@ -1780,6 +1804,87 @@ static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin
     FindClose(find);
 }
 
+/* A take that mostly lies past a loop point starts before the song's zero, which moves
+   every other stem in the folder back by the same silence. */
+static void shift_wav(const wchar_t *path, double seconds)
+{
+    const wchar_t *dot = wcsrchr(path, L'.');
+    if (!dot || (_wcsicmp(dot, L".wav") && _wcsicmp(dot, L".wave"))) {
+        log_trace("cannot pad %ls; not a wav\n", path);
+        return;
+    }
+
+    Track track;
+    memset(&track, 0, sizeof track);
+    if (decode_track(&track, path) != 0) return;
+
+    drwav_data_format format;
+    memset(&format, 0, sizeof format);
+    format.container = drwav_container_riff;
+    format.format = DR_WAVE_FORMAT_PCM;
+    format.channels = track.channels;
+    format.sampleRate = track.rate;
+    format.bitsPerSample = 16;
+
+    drwav_int16 *block = malloc((size_t)TAKE_CHUNK * sizeof *block);
+    drwav file;
+    if (!block || !drwav_init_file_write_w(&file, path, &format, NULL)) {
+        log_error("Could not pad '%ls'.\n", path);
+        free(block);
+        free(track.samples);
+        return;
+    }
+
+    drwav_uint64 silence = (drwav_uint64)(seconds * (double)track.rate);
+    memset(block, 0, (size_t)TAKE_CHUNK * sizeof *block);
+    for (drwav_uint64 done = 0; done < silence;) {
+        drwav_uint64 count = silence - done < TAKE_CHUNK ? silence - done : TAKE_CHUNK;
+        drwav_write_pcm_frames(&file, count, block);
+        done += count;
+    }
+
+    drwav_uint64 step = TAKE_CHUNK / track.channels;
+    for (drwav_uint64 done = 0; done < track.frames;) {
+        drwav_uint64 count = track.frames - done < step ? track.frames - done : step;
+        drwav_f32_to_s16(block, track.samples + (size_t)done * track.channels, (size_t)(count * track.channels));
+        drwav_write_pcm_frames(&file, count, block);
+        done += count;
+    }
+
+    drwav_uninit(&file);
+    free(block);
+    free(track.samples);
+    log_trace("padded %ls by %.3f s\n", path, seconds);
+}
+
+static void pad_stems(const wchar_t *folder, double seconds, const wchar_t *skip)
+{
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!is_audio_name(entry.cFileName)) continue;
+
+        size_t nameLength = wcslen(entry.cFileName);
+        size_t pathLength = length + nameLength + 2;
+        wchar_t *other = malloc(pathLength * sizeof *other);
+        if (!other) continue;
+        swprintf(other, pathLength, L"%ls\\%ls", folder, entry.cFileName);
+
+        if (_wcsicmp(other, skip)) shift_wav(other, seconds);
+        free(other);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+}
+
 static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate, drwav_uint64 offset)
 {
     wchar_t stems[1024], folder[1200], path[1400], base[160];
@@ -1808,6 +1913,35 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
         else swprintf(path, 1400, L"%ls\\%ls %d.wav", folder, base, attempt);
         if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) break;
     }
+    /* The take belongs to the pass of the song it overlaps most, so it is placed from
+       that pass's loop point rather than from the loop it happened to start in. */
+    double shift = 0.0;
+    if (shared && cue && cue->length > 0.0) {
+        double phase = (double)offset / (double)rate;
+        double duration = (double)frames / (double)rate;
+        double length = cue->length;
+        int pass = 0;
+        double best = 0.0;
+
+        for (int k = 0; k < 64; k++) {
+            double begin = (double)k * length, end = begin + length;
+            double from = phase > begin ? phase : begin;
+            double to = phase + duration < end ? phase + duration : end;
+            if (to > from) {
+                if (to - from > best) {
+                    best = to - from;
+                    pass = k;
+                }
+            } else if (best > 0.0) break;
+        }
+
+        double lead = phase - (double)pass * length;
+        if (lead < 0.0) {
+            shift = -lead;
+            offset = 0;
+        } else offset = (drwav_uint64)(lead * (double)rate);
+    }
+
     double begin, end;
     if (!take_span(first, frames, rate, offset, &begin, &end)) {
         log_trace("take was silent; not written\n");
@@ -1816,6 +1950,7 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
     if (!write_wav(path, first, frames, rate, offset)) return;
 
     log_trace("recorded %ls\n", path);
+    if (shift > 0.0) pad_stems(folder, shift, path);
     if (!shared) spawn_stems(folder);
     else prune_stems(folder, path, begin, end);
 }
@@ -1891,10 +2026,13 @@ static void rating_poll(void)
     jamming = mode == RATING_JAMMING;
 
     int count = shared && cue ? (int)cue->stems_count : 0;
+    int generation = shared && cue ? (int)cue->generation : 0;
     if (ratingThread && (mode != ratingRequestedMode ||
-                         (shared && (wcscmp(folder, ratingRequestedFolder) || count != ratingRequestedStems)))) {
+                         (shared && (wcscmp(folder, ratingRequestedFolder) || count != ratingRequestedStems ||
+                                     generation != ratingRequestedGeneration)))) {
         ratingRequestedMode = mode;
         ratingRequestedStems = count;
+        ratingRequestedGeneration = generation;
         wcsncpy(ratingRequestedFolder, folder, 1023);
         ratingRequestedFolder[1023] = 0;
         rating_request(mode, folder);
@@ -2000,7 +2138,8 @@ static void refresh_playlist(void)
 
     for (int i = 0; i < stemCount; i++) {
         if (!stemFiles[i] || !stems[i].frames) continue;
-        if (GetFileAttributesW(stemFiles[i]) != INVALID_FILE_ATTRIBUTES) continue;
+        ULONGLONG written = written_time(stemFiles[i]);
+        if (written && written == stemWritten[i]) continue;
 
         stems[i].frames = 0;
         stems[i].position = 0;
@@ -2053,6 +2192,7 @@ static void refresh_playlist(void)
         track->position = (drwav_uint64)(position * (double)track->rate);
         track->fraction = 0.0;
         stemFiles[stemCount - 1] = file;
+        stemWritten[stemCount - 1] = written_time(file);
         changed = 1;
 
         char name[128], line[192];
@@ -2065,7 +2205,11 @@ static void refresh_playlist(void)
 
     if (!changed) return;
 
-    if (cue && cue->pid == GetCurrentProcessId()) cue->stems_count = playlist_stems();
+    if (cue && cue->pid == GetCurrentProcessId()) {
+        cue->stems_count = playlist_stems();
+        cue->length = playlist_length();
+        InterlockedIncrement(&cue->generation);
+    }
     if (ratingThread) rating_request(RATING_RECITATION, L"");
 }
 

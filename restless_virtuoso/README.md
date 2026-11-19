@@ -189,9 +189,12 @@ With no stems instance running it records while its own rating is above zero, an
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
 `restless_virtuoso.exe` is started on that folder. A take is named after the sound that
-played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs
-begins with silence from that instance's last loop point, so the audio lands where it
-was played in the song. A take with nothing above the noise floor is not written.
+played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs is
+placed from the loop point of the pass it overlaps most, as the song builder places a
+pattern in its pass, so the audio lands where it was played in the song. A take that
+mostly lies past a loop point starts before the song's zero: the other stems get the
+same silence added to their head, the stems instance reloads them at its next loop, and
+the console names each one. A take with nothing above the noise floor is not written.
 
 An instance playing a folder ends its console line with a bar of the loop, e.g.
 `[=========---------------] 12.4/32.0s`: the play position in the song over the song's
