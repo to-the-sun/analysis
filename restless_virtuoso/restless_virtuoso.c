@@ -1104,7 +1104,7 @@ static void take_finish(void)
         FILE *sounds = _wfopen(take.soundsPath, L"w");
         if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
         else {
-            if (!take.soundCount) fputs("0, 0.000000 other;\n", sounds);
+            if (!take.soundCount) fputs("0, 0.000000 audio;\n", sounds);
             else {
                 LARGE_INTEGER frequency;
                 QueryPerformanceFrequency(&frequency);
@@ -1728,10 +1728,11 @@ static void recording_name(wchar_t *out, size_t size)
 
 /* A stem is one voice of the sound its name starts with, and voices collide by mode:
    every drum sample set with every other, a VST preset only with the same sound
-   number, and a soundless take only with itself. Two that collide cannot overlap in the
-   song, so a new take deletes the one it replaces. */
+   number, and an `audio` take, which carries no sound number, with every other such
+   take. Two that collide cannot overlap in the song, so a new take deletes the one it
+   replaces. */
 
-enum { MODE_OTHER, MODE_SAMPLES, MODE_SYNTH };
+enum { MODE_AUDIO, MODE_SAMPLES, MODE_SYNTH };
 
 static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
 {
@@ -1754,7 +1755,7 @@ static int stem_mode(const wchar_t *path)
 static int stems_collide(const wchar_t *a, const wchar_t *b)
 {
     int mode = stem_mode(a);
-    if (mode != stem_mode(b) || mode == MODE_OTHER) return 0;
+    if (mode != stem_mode(b)) return 0;
     if (mode != MODE_SYNTH) return 1;
 
     wchar_t keyA[16], keyB[16];
@@ -3384,18 +3385,17 @@ static void withdraw_instrument(void)
 static int sound_mode(int number)
 {
     open_sounds();
-    if (!soundList || number < 1 || number > (int)soundList->count) return MODE_OTHER;
+    if (!soundList || number < 1 || number > (int)soundList->count) return MODE_AUDIO;
 
     char name[SOUND_NAME];
     memcpy(name, soundList->name[number - 1], SOUND_NAME);
     name[SOUND_NAME - 1] = 0;
     if (strstr(name, " drum samples")) return MODE_SAMPLES;
     if (!strncmp(name, "VST ", 4)) return MODE_SYNTH;
-    return MODE_OTHER;
+    return MODE_AUDIO;
 }
 
-/* Whether a running instrument instance is playing a sound this stem collides with. An
-   instance with no sound collides only with itself, so it mutes nothing. */
+/* Whether a running instrument instance is playing a sound this stem collides with. */
 static int stem_muted(const wchar_t *file)
 {
     open_sounds();
@@ -3404,7 +3404,6 @@ static int stem_muted(const wchar_t *file)
     wchar_t key[16];
     stem_key(file, key, 16);
     int number = _wtoi(key), mode = sound_mode(number);
-    if (mode == MODE_OTHER) return 0;
 
     ULONGLONG now = GetTickCount64();
     for (int i = 0; i < (int)soundList->instrumentCount; i++) {

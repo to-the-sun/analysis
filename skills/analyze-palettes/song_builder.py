@@ -123,7 +123,7 @@ def stem_meta(p):
 def sound_class(base, p):
     if p.get('mode') == 'samples':
         return ('samples',)
-    if p.get('mode') == 'other':
+    if p.get('mode') == 'audio':
         return ('palette', base)
     return ('sound', p['sound']) if p.get('sound') is not None else None
 

@@ -144,7 +144,7 @@ each `new sound`, timed from the take's start; `mode` is `samples` for a drum sa
 set and `synth` for a VST preset. Every running instance shares one numbered list of
 sounds, so a number identifies a drum sample set or VST preset in every take, and the
 console prints the number with the description. A take with no sound applied holds
-the single line `0, 0.000000 other;`.
+the single line `0, 0.000000 audio;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
@@ -209,12 +209,12 @@ prints its name and how many stems are playing. A stem whose file has gone stops
 playing at that point and is named the same way, as `dropped`.
 
 Stems collide as their sounds' modes do: every drum sample set collides with every
-other, a VST preset only with the same sound number, and a soundless take only with
-itself. A take whose active audio overlaps an older stem it collides with deletes that
-file, and the stems instance drops it from the loop. For the same reason a stems
-instance mutes every stem a sound an instrument instance is playing collides with, so
+other, a VST preset only with the same sound number, and an `audio` take, which has no
+sound number, with every other `audio` take. A take whose active audio overlaps an
+older stem it collides with deletes that file, and the stems instance drops it from
+the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
 the live instance is the only voice of that sound, and plays them again when that
-instance stops or changes sound. An instance with no sound mutes nothing.
+instance stops or changes sound.
 
 ## Notes
 

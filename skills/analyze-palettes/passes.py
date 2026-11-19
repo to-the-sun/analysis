@@ -8,7 +8,7 @@ and its lead-in is the pattern start minus that pass's loop point plus the pad.
 A sounds file, when present, holds one line per sound change,
 ``index, milliseconds number mode;``, where number names a drum set or VST
 preset and mode is ``samples`` or ``synth``. A line with no number,
-``index, milliseconds other;``, marks a device that applies no sound.
+``index, milliseconds audio;``, marks a device that applies no sound.
 """
 import os
 
