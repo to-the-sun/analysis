@@ -208,11 +208,13 @@ next loop point, aligned with them rather than at the top of the song, and the c
 prints its name and how many stems are playing. A stem whose file has gone stops
 playing at that point and is named the same way, as `dropped`.
 
-Stems of the same sound never overlap in the song, as in the song builder: a take whose
-active audio overlaps an older take of the same sound deletes that file, and the stems
-instance drops it from the loop. For the same reason a stems instance mutes every stem
-of a sound an instrument instance is playing, so the live instance is the only voice of
-that sound, and plays them again when that instance stops or changes sound.
+Stems collide as their sounds' modes do: every drum sample set collides with every
+other, every soundless take with every other, and a VST preset only with the same sound
+number. A take whose active audio overlaps an older stem it collides with deletes that
+file, and the stems instance drops it from the loop. For the same reason a stems
+instance mutes every stem a sound an instrument instance is playing collides with, so
+the live instance is the only voice of that sound, and plays them again when that
+instance stops or changes sound.
 
 ## Notes
 

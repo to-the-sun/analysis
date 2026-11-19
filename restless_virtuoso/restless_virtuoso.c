@@ -448,7 +448,8 @@ static void load_stem_leads(void);
 static double stem_lead(const wchar_t *file);
 static void set_stem_lead(const wchar_t *file, double lead);
 static void save_stem_leads(void);
-static int sound_live(int number);
+static int sound_mode(int number);
+static int stem_muted(const wchar_t *file);
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
 static int audioFileCount;
@@ -1725,9 +1726,12 @@ static void recording_name(wchar_t *out, size_t size)
     else swprintf(out, size, L"%d", recording.number);
 }
 
-/* Stems collide as they do in the song builder: two of the same sound whose active
-   audio overlaps in the song cannot both play, so a new take deletes the one it
-   replaces. */
+/* A stem is one voice of the sound its name starts with, and voices collide by mode:
+   every drum sample set with every other, every soundless take with every other, and a
+   VST preset only with the same sound number. Two that collide cannot overlap in the
+   song, so a new take deletes the one it replaces. */
+
+enum { MODE_OTHER, MODE_SAMPLES, MODE_SYNTH };
 
 static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
 {
@@ -1738,6 +1742,25 @@ static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
     while (length + 1 < size && name[length] >= L'0' && name[length] <= L'9') length++;
     wmemcpy(key, name, length);
     key[length] = 0;
+}
+
+static int stem_mode(const wchar_t *path)
+{
+    wchar_t key[16];
+    stem_key(path, key, 16);
+    return sound_mode(_wtoi(key));
+}
+
+static int stems_collide(const wchar_t *a, const wchar_t *b)
+{
+    int mode = stem_mode(a);
+    if (mode != stem_mode(b)) return 0;
+    if (mode != MODE_SYNTH) return 1;
+
+    wchar_t keyA[16], keyB[16];
+    stem_key(a, keyA, 16);
+    stem_key(b, keyB, 16);
+    return !wcscmp(keyA, keyB);
 }
 
 static int active_span(const Track *track, double *begin, double *end)
@@ -1808,9 +1831,6 @@ static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin
     free(pattern);
     if (find == INVALID_HANDLE_VALUE) return;
 
-    wchar_t key[16];
-    stem_key(path, key, 16);
-
     do {
         if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         if (!is_audio_name(entry.cFileName)) continue;
@@ -1821,11 +1841,8 @@ static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin
         if (!other) continue;
         swprintf(other, pathLength, L"%ls\\%ls", folder, entry.cFileName);
 
-        wchar_t otherKey[16];
-        stem_key(other, otherKey, 16);
-
         double otherBegin, otherEnd;
-        if (!wcscmp(otherKey, key) && _wcsicmp(other, path) &&
+        if (_wcsicmp(other, path) && stems_collide(path, other) &&
             file_span(other, &otherBegin, &otherEnd)) {
             double otherLead = stem_lead(other);
             if (begin < otherEnd + otherLead && otherBegin + otherLead < end) {
@@ -2185,19 +2202,10 @@ static void refresh_playlist(void)
     if (ratingThread) rating_request(RATING_RECITATION, L"");
 }
 
-/* A stem of the sound an instrument instance is playing would double that sound, so it
-   leaves the mix until the instance stops playing it. */
 static void mute_stems(void)
 {
-    for (int i = 0; i < stemCount; i++) {
-        int muted = 0;
-        if (stemFiles[i]) {
-            wchar_t key[16];
-            stem_key(stemFiles[i], key, 16);
-            muted = sound_live(_wtoi(key));
-        }
-        InterlockedExchange(&stems[i].muted, muted);
-    }
+    for (int i = 0; i < stemCount; i++)
+        InterlockedExchange(&stems[i].muted, stemFiles[i] ? stem_muted(stemFiles[i]) : 0);
 }
 
 static void shuffle(int *items, int count)
@@ -3373,17 +3381,38 @@ static void withdraw_instrument(void)
     if (slot >= 0) soundList->pid[slot] = 0;
 }
 
-static int sound_live(int number)
+static int sound_mode(int number)
 {
     open_sounds();
-    if (!soundList || number <= 0) return 0;
+    if (!soundList || number < 1 || number > (int)soundList->count) return MODE_OTHER;
+
+    char name[SOUND_NAME];
+    memcpy(name, soundList->name[number - 1], SOUND_NAME);
+    name[SOUND_NAME - 1] = 0;
+    if (strstr(name, " drum samples")) return MODE_SAMPLES;
+    if (!strncmp(name, "VST ", 4)) return MODE_SYNTH;
+    return MODE_OTHER;
+}
+
+/* Whether a running instrument instance is playing a sound this stem collides with. */
+static int stem_muted(const wchar_t *file)
+{
+    open_sounds();
+    if (!soundList) return 0;
+
+    wchar_t key[16];
+    stem_key(file, key, 16);
+    int number = _wtoi(key), mode = sound_mode(number);
 
     ULONGLONG now = GetTickCount64();
-    int live = 0;
-    for (int i = 0; i < (int)soundList->instrumentCount && !live; i++)
-        live = soundList->pid[i] && soundList->last[i] == number &&
-               now - (ULONGLONG)soundList->beat[i] < 2000;
-    return live;
+    for (int i = 0; i < (int)soundList->instrumentCount; i++) {
+        if (!soundList->pid[i] || now - (ULONGLONG)soundList->beat[i] > 2000) continue;
+
+        int playing = soundList->last[i];
+        if (sound_mode(playing) != mode) continue;
+        if (mode != MODE_SYNTH || playing == number) return 1;
+    }
+    return 0;
 }
 
 /* song.json sits beside [palettes], one folder above the stems folder. An instrument
