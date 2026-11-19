@@ -1397,8 +1397,8 @@ static DWORD WINAPI rating_worker(void *unused)
         filled = 0;
 
         double elapsed = rating_elapsed();
-        double sumBefore = ratingScores.total_score_sum;
-        int countBefore = ratingScores.score_count;
+        double sumBefore = ratingScores.total_score_sum, ownSum = 0.0;
+        int countBefore = ratingScores.score_count, ownCount = 0;
 
         if (ratingOwn) {
             int active = (int)(pushed - rate / 5);
@@ -1407,12 +1407,21 @@ static DWORD WINAPI rating_worker(void *unused)
             if (window < 0) window = 0;
             analyzer_analyze_chunk(ratingOwn, block, step, rate, window / hop, active / hop, chunk);
             pushed += step;
+            ownSum = ratingScores.total_score_sum - sumBefore;
+            ownCount = ratingScores.score_count - countBefore;
         }
         for (int i = 0; i < ratingCopyCount; i++) rating_copy_step(&ratingCopies[i], elapsed, chunk);
 
         double sum = ratingScores.total_score_sum - sumBefore;
         int count = ratingScores.score_count - countBefore;
-        ratingBurst = count > 0 ? sum / count : 0.0;
+
+        /* The score is this instance's own side of the last 100 ms: its own audio when
+           it has an analyzer of it, otherwise the stems it is playing. */
+        if (!ratingOwn) {
+            ownSum = sum;
+            ownCount = count;
+        }
+        ratingBurst = ownCount > 0 ? ownSum / ownCount : 0.0;
 
         if (ratingStepCount == RATING_STEPS) {
             ratingSum -= ratingSteps[ratingStepHead].sum;
