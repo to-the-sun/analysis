@@ -113,4 +113,4 @@ measured gap.
 6. **Starts are measured, not shared.** Nothing is snapped to a common grid for its own sake; the rows agree
 because the audio puts them on the same pulse.
 7. **The cycle count is the number of strikes heard and the remainder is
-dropped.** However, as seen here,the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment as its full length, as long as the tracked element exists within it as it does in the others. 
+dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment as its full length, as long as the tracked element exists within it as it does in the others. 
