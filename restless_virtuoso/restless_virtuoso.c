@@ -255,6 +255,8 @@ typedef struct {
     const char *name, *pitches;
 } Scale;
 
+#define SCALE_NAME 32
+
 static const Scale scales[] = {
     {"major (Ionian)", "C D E F G A B"},
     {"Dorian", "C D Eb F G A Bb"},
@@ -294,22 +296,58 @@ static const Scale scales[] = {
 };
 
 static unsigned scaleMask;
+static int scaleFollow;
+static LONG scaleSeen;
+
+/* "C#", "Bb" and the like, as a pitch class. */
+static int pitch_class(const char *name)
+{
+    static const int semitones[] = {9, 11, 0, 2, 4, 5, 7};
+
+    if (*name < 'A' || *name > 'G') return -1;
+
+    int pitch = semitones[*name - 'A'];
+    while (name[1] == '#' || name[1] == 'b') pitch += *++name == '#' ? 1 : -1;
+    return (pitch % 12 + 12) % 12;
+}
 
 static unsigned scale_mask(const char *pitches)
 {
-    static const char letters[] = "CDEFGAB";
-    static const int semitones[] = {0, 2, 4, 5, 7, 9, 11};
     unsigned mask = 0;
 
-    for (const char *c = pitches; *c; c++) {
-        const char *letter = *c >= 'A' && *c <= 'G' ? strchr(letters, *c) : NULL;
-        if (!letter) continue;
-
-        int semitone = semitones[letter - letters];
-        while (c[1] == '#' || c[1] == 'b') semitone += *++c == '#' ? 1 : -1;
-        mask |= 1u << ((semitone % 12 + 12) % 12);
-    }
+    for (const char *c = pitches; *c; c++)
+        if (*c >= 'A' && *c <= 'G') {
+            mask |= 1u << pitch_class(c);
+            while (c[1] == '#' || c[1] == 'b') c++;
+        }
     return mask;
+}
+
+/* The scales are listed on C, so a root turns one into its key. */
+static unsigned scale_root_mask(unsigned mask, int root)
+{
+    return root ? ((mask << root) | (mask >> (12 - root))) & 0xfff : mask;
+}
+
+static const char *pitch_name(int pitch)
+{
+    static const char *names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    return names[pitch % 12];
+}
+
+static void scale_notes(char *out, size_t size, int root)
+{
+    size_t at = 0;
+
+    for (int i = 0; i < 12; i++) {
+        int pitch = (root + i) % 12;
+        if (!(scaleMask >> pitch & 1)) continue;
+
+        int length = snprintf(out + at, size - at, "%s%s", at ? " " : "", pitch_name(pitch));
+        if (length < 0 || (size_t)length >= size - at) break;
+        at += (size_t)length;
+    }
+    out[at] = 0;
 }
 
 static int scale_note(int note)
@@ -880,6 +918,8 @@ typedef struct {
     volatile LONG generation;
     volatile double length;
     volatile double rating;
+    volatile LONG scale_seq, scale_mask, scale_root;
+    char scale_name[SCALE_NAME];
 } LoopCue;
 
 static HANDLE cueMapping;
@@ -923,7 +963,7 @@ static void open_cue(void)
 {
     if (cueMapping) return;
     cueMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(LoopCue),
-                                    "Local\\RestlessVirtuosoLoopCue");
+                                    "Local\\RestlessVirtuosoLoopCue2");
     cue = cueMapping ? MapViewOfFile(cueMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LoopCue)) : NULL;
     if (cue) take.seen = InterlockedCompareExchange(&cue->seq, 0, 0);
 }
@@ -1066,6 +1106,20 @@ static void clear_loop_cue(void)
     cue->length = 0.0;
     cue->folder[0] = 0;
     cue->stems[0] = 0;
+}
+
+/* The session's scale is the first one drawn by an instance that follows one, and a
+   song's saved scale takes over when a stems instance loads that song. */
+static void publish_scale(unsigned mask, int root, const char *name)
+{
+    open_cue();
+    if (!cue || (cue->scale_mask == (LONG)mask && cue->scale_root == root && !strcmp(cue->scale_name, name)))
+        return;
+
+    cue->scale_root = root;
+    cue->scale_mask = (LONG)mask;
+    snprintf(cue->scale_name, sizeof cue->scale_name, "%s", name);
+    InterlockedIncrement(&cue->scale_seq);
 }
 
 #define TAKE_CHUNK (1u << 20)
@@ -3791,6 +3845,23 @@ static void load_song_instruments(const char *array)
     }
 }
 
+/* A song keeps the scale it was played in, so every instrument of it plays that one. */
+static void load_song_scale(const char *object)
+{
+    char name[SCALE_NAME] = "", root[8] = "";
+    const char *value = json_value(object, "scale");
+    if (!value || !json_text(value, name, sizeof name)) return;
+    value = json_value(object, "root");
+    if (!value || !json_text(value, root, sizeof root)) return;
+
+    int pitch = pitch_class(root);
+    for (size_t i = 0; pitch >= 0 && i < sizeof scales / sizeof *scales; i++)
+        if (!_stricmp(scales[i].name, name)) {
+            publish_scale(scale_root_mask(scale_mask(scales[i].pitches), pitch), pitch, scales[i].name);
+            return;
+        }
+}
+
 /* The stems instance reads the song it is resuming, so every instrument can take its
    sound back and the numbers in the old sounds files keep naming the same sounds. */
 static void load_song(void)
@@ -3836,6 +3907,9 @@ static void load_song(void)
 
     const char *instruments = json_value(text, "instruments");
     if (instruments && *instruments == '[') load_song_instruments(instruments);
+
+    const char *scale = json_value(text, "random_scale");
+    if (scale && *scale == '{') load_song_scale(scale);
     songReady = 1;
 
     free(names);
@@ -3882,6 +3956,9 @@ static void save_song(void)
         fputs(",\n  \"stems\": ", file);
         fwrite(skip_space(leads), 1, leadsLength, file);
     }
+    if (cue && cue->scale_mask)
+        fprintf(file, ",\n  \"random_scale\": { \"scale\": \"%s\", \"root\": \"%s\" }",
+                cue->scale_name, pitch_name((int)cue->scale_root));
     fputs("\n}\n", file);
 
     int failed = ferror(file);
@@ -4141,6 +4218,38 @@ static void console_line(const char *text)
     g.lineWidth = 0;
 }
 
+static void apply_scale(unsigned mask, int root, const char *name)
+{
+    char notes[64], line[160];
+
+    scaleMask = mask;
+    scale_notes(notes, sizeof notes, root);
+    snprintf(line, sizeof line, "  random scale: %s %s (%s)", pitch_name(root), name, notes);
+    console_line(line);
+    log_trace("random scale: %s %s (%s)\n", pitch_name(root), name, notes);
+}
+
+/* A follower takes the session's scale on, and takes it over again whenever it moves. */
+static void follow_scale(void)
+{
+    open_cue();
+    if (!scaleFollow || !cue || !cue->scale_mask || cue->scale_seq == scaleSeen) return;
+
+    scaleSeen = cue->scale_seq;
+    apply_scale((unsigned)cue->scale_mask, (int)cue->scale_root, cue->scale_name);
+}
+
+static void draw_scale(void)
+{
+    int root = rand() % 12;
+    const Scale *scale = &scales[rand() % (int)(sizeof scales / sizeof *scales)];
+    unsigned mask = scale_root_mask(scale_mask(scale->pitches), root);
+
+    publish_scale(mask, root, scale->name);
+    scaleSeen = cue ? cue->scale_seq : 0;
+    apply_scale(mask, root, scale->name);
+}
+
 static void print_sound(const char *prefix)
 {
     char name[160], line[192];
@@ -4388,6 +4497,7 @@ static void CALLBACK midi_in_proc(HMIDIIN handle, UINT message, DWORD_PTR instan
     int channel = (int)(data & 0x0f) + 1;
     if (g.midiChannel && channel != g.midiChannel) return;
 
+    follow_scale();
     int status = (int)(data & 0xf0);
     if (scaleMask && (status == 0x80 || status == 0x90 || status == 0xa0))
         data = (data & 0xffff00ffu) | (uint32_t)scale_note((int)(data >> 8) & 0x7f) << 8;
@@ -5216,15 +5326,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     g.midiInIndex = -1;
     g.midiOutIndex = -1;
 
-    if (options.randomScale) {
-        const Scale *scale = &scales[rand() % (int)(sizeof scales / sizeof *scales)];
-        char line[128];
-        scaleMask = scale_mask(scale->pitches);
-        snprintf(line, sizeof line, "  random scale: %s (%s)", scale->name, scale->pitches);
-        console_line(line);
-        log_trace("random scale: %s (%s)\n", scale->name, scale->pitches);
-    }
-
     callbacks.bufferSwitch = on_buffer_switch;
     callbacks.sampleRateDidChange = on_sample_rate_changed;
     callbacks.asioMessage = on_asio_message;
@@ -5336,6 +5437,11 @@ static int run(int argc, char **argv, const wchar_t *folder)
     if (setup_buffer(options.buffer) != 0) goto done;
     open_cue();
     if (playlistMode || instrumentMode) load_song();
+    if (options.randomScale) {
+        scaleFollow = 1;
+        follow_scale();
+        if (!scaleMask) draw_scale();
+    }
     if (instrumentMode) {
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
