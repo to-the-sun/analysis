@@ -42,7 +42,7 @@
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
     char instrument[MAX_PATH], samplesPath[MAX_PATH], vstsPath[MAX_PATH];
-    int rate, buffer, synth, list, inputChannel, samplesRatio;
+    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale;
 } Options;
 
 typedef struct {
@@ -251,6 +251,114 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *info)
 static volatile uint32_t midiHead, midiTail;
 static uint32_t midiQueue[MIDI_QUEUE];
 
+typedef struct {
+    const char *name, *pitches;
+} Scale;
+
+#define SCALE_NAME 32
+
+static const Scale scales[] = {
+    {"major (Ionian)", "C D E F G A B"},
+    {"Dorian", "C D Eb F G A Bb"},
+    {"Phrygian", "C Db Eb F G Ab Bb"},
+    {"Lydian", "C D E F# G A B"},
+    {"Mixolydian", "C D E F G A Bb"},
+    {"natural minor (Aeolian)", "C D Eb F G Ab Bb"},
+    {"Locrian", "C Db Eb F Gb Ab Bb"},
+    {"harmonic minor", "C D Eb F G Ab B"},
+    {"Locrian natural 6", "C Db Eb F Gb A Bb"},
+    {"Ionian sharp 5", "C D E F G# A B"},
+    {"Dorian sharp 4", "C D Eb F# G A Bb"},
+    {"Phrygian dominant", "C Db E F G Ab Bb"},
+    {"Lydian sharp 2", "C D# E F# G A B"},
+    {"ultralocrian", "C Db Eb Fb Gb Ab A"},
+    {"melodic minor", "C D Eb F G A B"},
+    {"Dorian flat 2", "C Db Eb F G A Bb"},
+    {"Lydian augmented", "C D E F# G# A B"},
+    {"Lydian dominant", "C D E F# G A Bb"},
+    {"Mixolydian flat 6", "C D E F G# A Bb"},
+    {"Locrian natural 2", "C D Eb F Gb Ab Bb"},
+    {"altered", "C Db Eb Fb Gb Ab Bb"},
+    {"major pentatonic", "C D E G A"},
+    {"minor pentatonic", "C Eb F G Bb"},
+    {"suspended pentatonic", "C D F G Bb"},
+    {"blues", "C Eb F Gb G Bb"},
+    {"major blues", "C D Eb E G A"},
+    {"whole tone", "C D E F# G# Bb"},
+    {"diminished", "C D Eb F Gb Ab A B"},
+    {"dominant diminished", "C Db Eb E F# G A Bb"},
+    {"harmonic major", "C D E F G Ab B"},
+    {"double harmonic", "C Db E F G Ab B"},
+    {"Hungarian minor", "C D Eb F# G Ab B"},
+    {"Neapolitan minor", "C Db Eb F G Ab B"},
+    {"Neapolitan major", "C Db Eb F G A B"},
+    {"enigmatic", "C Db E F# G# Bb B"},
+};
+
+static unsigned scaleMask;
+static int scaleFollow;
+static LONG scaleSeen;
+
+/* "C#", "Bb" and the like, as a pitch class. */
+static int pitch_class(const char *name)
+{
+    static const int semitones[] = {9, 11, 0, 2, 4, 5, 7};
+
+    if (*name < 'A' || *name > 'G') return -1;
+
+    int pitch = semitones[*name - 'A'];
+    while (name[1] == '#' || name[1] == 'b') pitch += *++name == '#' ? 1 : -1;
+    return (pitch % 12 + 12) % 12;
+}
+
+static unsigned scale_mask(const char *pitches)
+{
+    unsigned mask = 0;
+
+    for (const char *c = pitches; *c; c++)
+        if (*c >= 'A' && *c <= 'G') {
+            mask |= 1u << pitch_class(c);
+            while (c[1] == '#' || c[1] == 'b') c++;
+        }
+    return mask;
+}
+
+/* The scales are listed on C, so a root turns one into its key. */
+static unsigned scale_root_mask(unsigned mask, int root)
+{
+    return root ? ((mask << root) | (mask >> (12 - root))) & 0xfff : mask;
+}
+
+static const char *pitch_name(int pitch)
+{
+    static const char *names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    return names[pitch % 12];
+}
+
+static void scale_notes(char *out, size_t size, int root)
+{
+    size_t at = 0;
+
+    for (int i = 0; i < 12; i++) {
+        int pitch = (root + i) % 12;
+        if (!(scaleMask >> pitch & 1)) continue;
+
+        int length = snprintf(out + at, size - at, "%s%s", at ? " " : "", pitch_name(pitch));
+        if (length < 0 || (size_t)length >= size - at) break;
+        at += (size_t)length;
+    }
+    out[at] = 0;
+}
+
+static int scale_note(int note)
+{
+    for (int pitch = note; pitch >= 0; pitch--)
+        if (scaleMask >> (pitch % 12) & 1) return pitch;
+    for (int pitch = note; pitch < 128; pitch++)
+        if (scaleMask >> (pitch % 12) & 1) return pitch;
+    return note;
+}
+
 #define VST_MAX_PLUGINS 1024
 #define VST_MAX_EVENTS 256
 #define VST_MAX_OUTPUTS 32
@@ -431,6 +539,7 @@ static void print_wide_path(const wchar_t *path)
 static int playlistMode, instrumentMode;
 static volatile LONG playlistRefresh;
 #define STEM_NAME 160
+#define MIX_BLOCK 4096
 
 /* Each stem's lead-in lives in song.json, so a take carries no silence of its own: it
    is cued that far into the loop instead. */
@@ -809,6 +918,8 @@ typedef struct {
     volatile LONG generation;
     volatile double length;
     volatile double rating;
+    volatile LONG scale_seq, scale_mask, scale_root;
+    char scale_name[SCALE_NAME];
 } LoopCue;
 
 static HANDLE cueMapping;
@@ -852,7 +963,7 @@ static void open_cue(void)
 {
     if (cueMapping) return;
     cueMapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(LoopCue),
-                                    "Local\\RestlessVirtuosoLoopCue");
+                                    "Local\\RestlessVirtuosoLoopCue2");
     cue = cueMapping ? MapViewOfFile(cueMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LoopCue)) : NULL;
     if (cue) take.seen = InterlockedCompareExchange(&cue->seq, 0, 0);
 }
@@ -995,6 +1106,20 @@ static void clear_loop_cue(void)
     cue->length = 0.0;
     cue->folder[0] = 0;
     cue->stems[0] = 0;
+}
+
+/* The session's scale is the first one drawn by an instance that follows one, and a
+   song's saved scale takes over when a stems instance loads that song. */
+static void publish_scale(unsigned mask, int root, const char *name)
+{
+    open_cue();
+    if (!cue || (cue->scale_mask == (LONG)mask && cue->scale_root == root && !strcmp(cue->scale_name, name)))
+        return;
+
+    cue->scale_root = root;
+    cue->scale_mask = (LONG)mask;
+    snprintf(cue->scale_name, sizeof cue->scale_name, "%s", name);
+    InterlockedIncrement(&cue->scale_seq);
 }
 
 #define TAKE_CHUNK (1u << 20)
@@ -2927,11 +3052,6 @@ static void init_vst_taste(int library)
         vstLibraryHigh[library] -= excess - excess / 2;
     }
 
-    char line[192];
-    if (stats) snprintf(line, sizeof line, "  %s: range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
-    else snprintf(line, sizeof line, "  warning: no stats entry for %s, range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
-    console_line(line);
-
     int count = vstLibraryPresets[library];
     if (count <= 0) return;
 
@@ -3043,6 +3163,7 @@ static int save_settings(const char *path, const Options *options)
         json_write_text(file, options->vstsPath);
         fprintf(file, ",\n");
     }
+    if (options->randomScale) fprintf(file, "  \"random_scale\": 1,\n");
     fprintf(file, "  \"samples_ratio\": %d,\n  \"taste\": {\n    \"samples\": {", options->samplesRatio);
 
     int drumsWritten = write_drums(file, options->samplesPath[0] && !drumCount);
@@ -3416,6 +3537,15 @@ static int stem_muted(const wchar_t *file)
     return 0;
 }
 
+/* Length of the stems folder's parent, its separator included. */
+static size_t project_root(const wchar_t *folder)
+{
+    size_t length = wcslen(folder);
+    while (length > 3 && (folder[length - 1] == L'\\' || folder[length - 1] == L'/')) length--;
+    while (length > 3 && folder[length - 1] != L'\\' && folder[length - 1] != L'/') length--;
+    return length;
+}
+
 /* song.json sits beside [palettes], one folder above the stems folder. An instrument
    takes the folder from the cue the stems instance publishes. */
 static int song_path(wchar_t *out, size_t size)
@@ -3424,13 +3554,29 @@ static int song_path(wchar_t *out, size_t size)
     const wchar_t *from = playlistMode ? playlistFolder : cue && cue->folder[0] ? cue->folder : NULL;
     if (!from) return -1;
 
-    size_t length = wcslen(from);
-    while (length > 3 && (from[length - 1] == L'\\' || from[length - 1] == L'/')) length--;
-    while (length > 3 && from[length - 1] != L'\\' && from[length - 1] != L'/') length--;
+    size_t length = project_root(from);
     if (length <= 3 || length + 10 > size) return -1;
 
     wmemcpy(out, from, length);
     wcscpy(out + length, L"song.json");
+    return 0;
+}
+
+/* The mix is named after the project folder itself. */
+static int mix_path(wchar_t *out, size_t size)
+{
+    if (!playlistFolder) return -1;
+
+    size_t root = project_root(playlistFolder);
+    size_t end = root;
+    while (end > 3 && (playlistFolder[end - 1] == L'\\' || playlistFolder[end - 1] == L'/')) end--;
+    size_t start = end;
+    while (start > 3 && playlistFolder[start - 1] != L'\\' && playlistFolder[start - 1] != L'/') start--;
+    if (end <= start || root + (end - start) + 5 > size) return -1;
+
+    wmemcpy(out, playlistFolder, root);
+    wmemcpy(out + root, playlistFolder + start, end - start);
+    wcscpy(out + root + (end - start), L".wav");
     return 0;
 }
 
@@ -3699,6 +3845,23 @@ static void load_song_instruments(const char *array)
     }
 }
 
+/* A song keeps the scale it was played in, so every instrument of it plays that one. */
+static void load_song_scale(const char *object)
+{
+    char name[SCALE_NAME] = "", root[8] = "";
+    const char *value = json_value(object, "scale");
+    if (!value || !json_text(value, name, sizeof name)) return;
+    value = json_value(object, "root");
+    if (!value || !json_text(value, root, sizeof root)) return;
+
+    int pitch = pitch_class(root);
+    for (size_t i = 0; pitch >= 0 && i < sizeof scales / sizeof *scales; i++)
+        if (!_stricmp(scales[i].name, name)) {
+            publish_scale(scale_root_mask(scale_mask(scales[i].pitches), pitch), pitch, scales[i].name);
+            return;
+        }
+}
+
 /* The stems instance reads the song it is resuming, so every instrument can take its
    sound back and the numbers in the old sounds files keep naming the same sounds. */
 static void load_song(void)
@@ -3744,6 +3907,9 @@ static void load_song(void)
 
     const char *instruments = json_value(text, "instruments");
     if (instruments && *instruments == '[') load_song_instruments(instruments);
+
+    const char *scale = json_value(text, "random_scale");
+    if (scale && *scale == '{') load_song_scale(scale);
     songReady = 1;
 
     free(names);
@@ -3790,6 +3956,9 @@ static void save_song(void)
         fputs(",\n  \"stems\": ", file);
         fwrite(skip_space(leads), 1, leadsLength, file);
     }
+    if (cue && cue->scale_mask)
+        fprintf(file, ",\n  \"random_scale\": { \"scale\": \"%s\", \"root\": \"%s\" }",
+                cue->scale_name, pitch_name((int)cue->scale_root));
     fputs("\n}\n", file);
 
     int failed = ferror(file);
@@ -3798,6 +3967,124 @@ static void save_song(void)
     InterlockedExchange(&soundList->lock, 0);
     if (failed) log_error("Could not write '%ls'.\n", path);
     else log_trace("wrote %ls\n", path);
+}
+
+typedef struct {
+    const float *samples;
+    drwav_uint64 frames, start;
+    unsigned channels;
+} MixStem;
+
+/* A stem placed at its lead-in on the output's channel, silent outside it. */
+static float mix_sample(const MixStem *stem, drwav_uint64 frame, int output)
+{
+    if (frame < stem->start || frame - stem->start >= stem->frames) return 0.0f;
+    return stem->samples[(size_t)(frame - stem->start) * stem->channels + (size_t)output % stem->channels];
+}
+
+/* Every stem file in the folder, placed by its lead-in and peak-normalized to 1,
+   written beside song.json when the stems instance closes. Stems already loaded
+   are reused, so only a take that never reached a loop point is decoded again. */
+static void write_mix(void)
+{
+    wchar_t path[1100], file[1100];
+    MixStem mixes[QUEUE_FILES];
+    float *decoded[QUEUE_FILES] = {0};
+    unsigned rate = 0;
+    int count = 0;
+
+    if (mix_path(path, sizeof path / sizeof *path) != 0) return;
+    load_stem_leads();
+
+    size_t length = wcslen(playlistFolder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", playlistFolder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (count == QUEUE_FILES) break;
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !is_audio_name(entry.cFileName)) continue;
+        int written = swprintf(file, sizeof file / sizeof *file, L"%ls\\%ls", playlistFolder, entry.cFileName);
+        if (written < 0 || written >= (int)(sizeof file / sizeof *file)) continue;
+
+        const Track *track = NULL;
+        for (int i = 0; i < stemCount && !track; i++)
+            if (stemFiles[i] && stems[i].frames && !_wcsicmp(stemFiles[i], file)) track = &stems[i];
+
+        Track fresh;
+        if (!track) {
+            if (decode_track(&fresh, file) != 0) continue;
+            decoded[count] = fresh.samples;
+            track = &fresh;
+        }
+
+        double lead = stem_lead(file);
+        MixStem *mix = &mixes[count];
+        mix->samples = track->samples;
+        mix->frames = track->frames;
+        mix->channels = track->channels;
+        mix->start = lead > 0.0 ? (drwav_uint64)(lead * (double)track->rate + 0.5) : 0;
+        if (!rate) rate = track->rate;
+        count++;
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+
+    drwav_uint64 frames = 0;
+    for (int i = 0; i < count; i++)
+        if (mixes[i].start + mixes[i].frames > frames) frames = mixes[i].start + mixes[i].frames;
+
+    if (count && rate && frames) {
+        float peak = 0.0f;
+        for (drwav_uint64 at = 0; at < frames; at++)
+            for (int output = 0; output < 2; output++) {
+                float value = 0.0f;
+                for (int i = 0; i < count; i++) value += mix_sample(&mixes[i], at, output);
+                float magnitude = fabsf(value);
+                if (magnitude > peak) peak = magnitude;
+            }
+
+        drwav_data_format format;
+        memset(&format, 0, sizeof format);
+        format.container = drwav_container_riff;
+        format.format = DR_WAVE_FORMAT_PCM;
+        format.channels = 2;
+        format.sampleRate = rate;
+        format.bitsPerSample = 16;
+
+        float *sums = malloc(MIX_BLOCK * 2 * sizeof *sums);
+        drwav_int16 *block = malloc(MIX_BLOCK * 2 * sizeof *block);
+        drwav wav;
+        if (!sums || !block || !drwav_init_file_write_w(&wav, path, &format, NULL)) {
+            log_error("Could not write '%ls'.\n", path);
+            free(sums);
+            free(block);
+        } else {
+            float scale = peak > 0.0f ? 1.0f / peak : 1.0f;
+            for (drwav_uint64 at = 0; at < frames; ) {
+                drwav_uint64 want = frames - at < MIX_BLOCK ? frames - at : MIX_BLOCK;
+                for (drwav_uint64 i = 0; i < want; i++)
+                    for (int output = 0; output < 2; output++) {
+                        float value = 0.0f;
+                        for (int s = 0; s < count; s++) value += mix_sample(&mixes[s], at + i, output);
+                        sums[i * 2 + output] = value * scale;
+                    }
+                drwav_f32_to_s16(block, sums, (size_t)(want * 2));
+                drwav_write_pcm_frames(&wav, want, block);
+                at += want;
+            }
+            drwav_uninit(&wav);
+            free(sums);
+            free(block);
+            log_trace("wrote %ls\n", path);
+        }
+    }
+
+    for (int i = 0; i < count; i++) free(decoded[i]);
 }
 
 /* An instrument that is already running when a stems instance starts, or that starts
@@ -3929,6 +4216,38 @@ static void console_line(const char *text)
     printf("\r%-*s\n", g.lineWidth, text);
     fflush(stdout);
     g.lineWidth = 0;
+}
+
+static void apply_scale(unsigned mask, int root, const char *name)
+{
+    char notes[64], line[160];
+
+    scaleMask = mask;
+    scale_notes(notes, sizeof notes, root);
+    snprintf(line, sizeof line, "  random scale: %s %s (%s)", pitch_name(root), name, notes);
+    console_line(line);
+    log_trace("random scale: %s %s (%s)\n", pitch_name(root), name, notes);
+}
+
+/* A follower takes the session's scale on, and takes it over again whenever it moves. */
+static void follow_scale(void)
+{
+    open_cue();
+    if (!scaleFollow || !cue || !cue->scale_mask || cue->scale_seq == scaleSeen) return;
+
+    scaleSeen = cue->scale_seq;
+    apply_scale((unsigned)cue->scale_mask, (int)cue->scale_root, cue->scale_name);
+}
+
+static void draw_scale(void)
+{
+    int root = rand() % 12;
+    const Scale *scale = &scales[rand() % (int)(sizeof scales / sizeof *scales)];
+    unsigned mask = scale_root_mask(scale_mask(scale->pitches), root);
+
+    publish_scale(mask, root, scale->name);
+    scaleSeen = cue ? cue->scale_seq : 0;
+    apply_scale(mask, root, scale->name);
 }
 
 static void print_sound(const char *prefix)
@@ -4178,6 +4497,11 @@ static void CALLBACK midi_in_proc(HMIDIIN handle, UINT message, DWORD_PTR instan
     int channel = (int)(data & 0x0f) + 1;
     if (g.midiChannel && channel != g.midiChannel) return;
 
+    follow_scale();
+    int status = (int)(data & 0xf0);
+    if (scaleMask && (status == 0x80 || status == 0x90 || status == 0xa0))
+        data = (data & 0xffff00ffu) | (uint32_t)scale_note((int)(data >> 8) & 0x7f) << 8;
+
     if (g.midiStream)
         log_line("MIDI ch %d  %02X %02X %02X", channel, (int)(data & 0xff),
                  (int)(data >> 8) & 0x7f, (int)(data >> 16) & 0x7f);
@@ -4326,12 +4650,6 @@ static int open_driver(const char *name, HWND window)
 
     g.postOutput = g.asio->vtable->outputReady(g.asio) == ASE_OK;
     return 0;
-}
-
-static void print_selection(const int *channels, int count)
-{
-    for (int i = 0; i < count; i++) printf("%s%d", i ? "," : "", channels[i] + 1);
-    if (!count) printf("none");
 }
 
 static int select_channels(const char *spec, int available, int *channels, int *count,
@@ -4775,7 +5093,10 @@ static void shutdown_monitor(void)
         g.asio = NULL;
     }
     if (settingsPath) save_settings(settingsPath, settingsOptions);
-    if (playlistMode) save_song();
+    if (playlistMode) {
+        save_song();
+        write_mix();
+    }
     take_finish();
     recording_stop(0);
     rating_stop();
@@ -4906,6 +5227,9 @@ static int load_settings(const char *path, Options *options)
         json_string(text, "vsts_path", options->vstsPath, sizeof options->vstsPath);
         const char *ratio = json_value(text, "samples_ratio");
         options->samplesRatio = ratio ? atoi(ratio) : 50;
+
+        const char *scale = json_value(text, "random_scale");
+        options->randomScale = scale && atoi(scale) == 1;
 
         const char *channel = json_value(text, "input-channel");
         char *stop = NULL;
@@ -5082,11 +5406,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     if (open_driver(driver, window) != 0) goto done;
     log_trace("driver opened\n");
 
-    printf("%s\n\n", g.driverName);
-    list_devices();
-    printf("\n");
-    log_trace("devices listed\n");
-
     if (playlistMode || instrumentMode) {
         if (select_channels(options.in, g.inCount, g.inCh, &g.nIn, 0, "input") != 0) goto done;
     } else if (options.inputChannel > 0 && !options.in) {
@@ -5118,6 +5437,11 @@ static int run(int argc, char **argv, const wchar_t *folder)
     if (setup_buffer(options.buffer) != 0) goto done;
     open_cue();
     if (playlistMode || instrumentMode) load_song();
+    if (options.randomScale) {
+        scaleFollow = 1;
+        follow_scale();
+        if (!scaleMask) draw_scale();
+    }
     if (instrumentMode) {
         if (options.samplesPath[0]) load_drums(options.samplesPath);
         if (options.vstsPath[0]) load_vsts(options.vstsPath);
@@ -5132,13 +5456,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     log_trace("buffers created\n");
     rating_start();
 
-    printf("  %d Hz, %d frames (%.2f ms), latency %d/%d frames\n",
-           (int)g.rate, g.bufferSize, 1000.0 * g.bufferSize / g.rate, g.latencyIn, g.latencyOut);
-    printf("  in ");
-    print_selection(g.inCh, g.nIn);
-    printf(" -> out ");
-    print_selection(g.outCh, g.nOut);
-    printf("\n");
     if (playlistMode) {
         printf("  %d audio files mixed from ", stemCount);
         print_wide_path(playlistFolder);

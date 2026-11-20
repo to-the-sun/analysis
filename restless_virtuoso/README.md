@@ -88,8 +88,7 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   }
   ```
 
-    Each plugin's range is printed as it loads, and a plugin with no entry is named in a
-  warning and left at 0-127. Entries are named by their `.dll` file name or the
+    A plugin with no entry is left at 0-127. Entries are named by their `.dll` file name or the
   plugin's own name, case-insensitive. `presets` is how many presets the plugin
   actually has, and
   random presets are drawn from it instead of the count the plugin reports. `range`
@@ -103,6 +102,14 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   comes from `samples_path` instead of `vsts_path` when both are loaded. Only one of
   them plays, and MIDI reaches only that one: note-ons trigger drum samples only
   while a drum sound is drawn, and reach the plugin only while a VST preset is.
+- `random_scale` is 1 to draw one of the named scales of Western music and a key to
+  root it in at random when the instance starts, and 0 (default) for none. Note-ons,
+  note-offs and aftertouch are moved to the nearest pitch of that scale as the MIDI
+  input arrives, so the sine synth, the drum samples, the VST and the MIDI output only
+  hear notes from it. The scale and its pitches are printed at startup. Every instance
+  with `random_scale` set to 1 plays the one scale of the session: the first to draw
+  one gives it to the others, instances that are already running included, and an
+  instance started later takes that scale instead of drawing its own.
 - `taste` holds, in whole seconds, how long each drum sample and each preset of
   each plugin has sounded above -60 dBFS. A second counts in full if the sound
   peaked above the gate anywhere in it. Every entry starts at 1; `new sound` draws
@@ -149,17 +156,22 @@ the single line `0, 0.000000 audio;`.
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
 instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
-seconds (`"3 16 drum samples.wav": 1.250000`). Every running
+seconds (`"3 16 drum samples.wav": 1.250000`), and a `"random_scale"` object such as
+`{ "scale": "Dorian", "root": "D" }` once a scale was playing during the song, which
+every instance with `random_scale` set to 1 takes over when the song is started again.
+Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
 that has already closed still has its sound saved. An instance started on a song with a
 `song.json` takes those sounds as the numbering, replacing whatever list the session
 already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
 starts, and instances started later begin on it. A drum sound keeps the seed that draws
-its sample set, so it comes back the same.
+its sample set, so it comes back the same. Closing a stems instance also writes a mix of
+every stem in its folder into the project folder, each placed at its lead-in and the lot
+peak-normalized to 1, named after the project folder itself, e.g.
+`2026-11-20-00-41-59.wav`.
 
-On startup the program lists every installed ASIO driver, then every MIDI input
-device.
+`--list` prints every installed ASIO driver and every MIDI input device.
 
 In instrument mode, left-click anywhere in the console to move up to the next shared
 sound, or to draw a new one when it is already on the highest, and right-click to move
