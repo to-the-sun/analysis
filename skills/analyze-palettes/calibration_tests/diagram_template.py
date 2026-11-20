@@ -25,14 +25,16 @@ ROWS = {
         ("kick", "#87fa96", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)]),
     ],
     "test_phrase_2": [
-        ("D chord", "#f12a1e", (232, 533), (0.73, 11.54, 22.14), 1.340,
-         [(0, 4), (0, 3), (0, 3)]),
-        ("E chord", "#f1ad03", (535, 835), (6.13, 16.86, 27.82), 1.340,
-         [(0, 4), (0, 3), (0, 3)]),
-        ("D chord", "#3ad07d", (837, 1137), (33.11,), 1.580, [(0, 3)]),
-        ("pad gate", "#2f9bff", (1139, 1439), (0.73,), 1.340, [(0, 24)]),
+        ("D4", "#f12a1e", (232, 472), (0.73, 11.54, 22.14), 1.340, [(0, 4)] * 3),
+        ("E4", "#f1ad03", (474, 714), (6.13, 16.86), 1.340, [(0, 4)] * 2),
+        ("G/D3", "#3ad07d", (716, 956), (27.82,), 1.340, [(0, 4)]),
+        ("D4", "#87fa96", (958, 1198), (33.11,), 1.580, [(0, 4)]),
+        ("F#3", "#2f9bff", (1200, 1439), (0.73,), 1.340, [(0, 16)]),
     ],
 }
+
+RULES = {"test_phrase_1": (534, 836, 1138, 1439.5),
+         "test_phrase_2": (473, 715, 957, 1199, 1439.5)}
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
 # or "center" to grow both ways from the band's midline
@@ -79,6 +81,7 @@ def main(name):
     ax.set_ylim(0, 1)
     ax.axis("off")
 
+    right = duration
     edges = np.linspace(0, duration, RIGHT - LEFT + 1)
     env = env_at(sr, x, edges, TRACE[name])
 
@@ -108,6 +111,7 @@ def main(name):
             x0, x1 = start + seg * loop, start + (seg + count) * loop
             ax.add_patch(Rectangle((x0, y(bottom - PAD)), x1 - x0, y(top + PAD) - y(bottom - PAD),
                                    fill=False, edgecolor=color, lw=1.05, zorder=3))
+            right = max(right, x1)
 
         fig.add_artist(Rectangle((48 / W, 1 - ((top + bottom) / 2 + 7.5) / H), 15 / W, 15 / H,
                                  transform=fig.transFigure, facecolor=color,
@@ -118,7 +122,10 @@ def main(name):
         fig.text(76 / W, cy - 26.5 / H, f"{loop:.2f} s × {total}",
                  fontsize=8.0, color=MUTED, va="baseline")
 
-    for px in (534, 836, 1138, 1439.5):
+    span = right + 0.3 if right > duration else duration
+    ax.set_xlim(0, span)
+
+    for px in RULES[name]:
         fig.lines.append(plt.Line2D([LEFT / W, RIGHT / W], [1 - px / H] * 2,
                                     transform=fig.transFigure, color=RULE, lw=0.72, zorder=4))
 
@@ -130,7 +137,7 @@ def main(name):
     text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono", 8.8, MUTED)
     text(48, 180, "outer rectangle = the whole pattern · "
                   "dashed verticals = the division between each segment", 8.6, MUTED)
-    for t in np.arange(0, duration, 5):
+    for t in np.arange(0, span, 5):
         text(LEFT + t / duration * (RIGHT - LEFT), 1477, f"{t:.0f}", 7.6, MUTED, ha="center")
     text((LEFT + RIGHT) / 2, 1529, "time (s)", 7.6, MUTED, ha="center")
 

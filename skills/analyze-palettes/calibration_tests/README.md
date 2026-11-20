@@ -68,58 +68,66 @@ Each test phrase below will have a key with the "correct" stats that should be d
 
 | Tracked element | Segment length (s) | Segments | Region (s) |
 |---|---:|---:|---|
-| D chord | 1.34 | 4, 3, 3 | 0.73–6.09, 11.54–15.56, 22.14–26.16 |
-| E chord | 1.34 | 4, 3, 3 | 6.13–11.49, 16.86–20.88, 27.82–31.84 |
-| D chord | 1.58 | 3 | 33.11–37.85 |
-| pad gate | 1.34 | 24 | 0.73–32.89 |
+| D4 | 1.34 | 4, 4, 4 | 0.73–6.09, 11.54–16.90, 22.14–27.50 |
+| E4 | 1.34 | 4, 4 | 6.13–11.49, 16.86–22.22 |
+| G/D3 | 1.34 | 4 | 27.82–33.18 |
+| D4 | 1.58 | 4 | 33.11–39.43 |
+| F#3 | 1.34 | 16 | 0.73–22.17 |
 
 ## Discussion
 
 1. **A tracked element can be a pitch rather than an instrument.** This palette is
-built from sustained synth voices rather than drums, so timbre cannot separate
-its chord patterns. The pitch does: the D chord is built on 293 Hz with partials
-at 583, 883 and 1174 Hz, and the E chord on 330 Hz with partials at 657, 990 and
-1313 Hz. Same gesture, different content in the segment, therefore two elements
-and two patterns. This is the rule from test_phrase_1 that a distinct element
-deserves a distinct pattern even when another shares its region exactly.
-2. **The off-beat strike is a second voice, not a softer chord.** Every chord
-strike is followed about two thirds of a second later by another strike.
-Measured 60–170 ms after each, the chord's upper partials sit 24 dB above the
-F#3 line (183, 366 and 549 Hz) on the accent, while on the off-beat the F#3 line
-sits 6 dB above them. The F#3 envelope and the chord-upper envelope correlate
-−0.25 to −0.57 at zero lag across the four middle sections and turn positive
-only at a lag of ±0.6–0.8 s, half a loop either way: two voices in anti-phase,
-not one voice at two levels. The pad is the F#3 one, and it is the third tracked
-element.
-3. **That voice is one element with one contiguous pattern.** It runs under both
-chords and never stops for a chord change, so unlike the chord rows its pattern
-is a single run: 24 segments from 0.73 s on the same grid as the chords. What
-identifies it is where its strike falls inside the segment, 0.67–0.77 s in
-rather than on the boundary, which is why it answers the chord stab instead of
-doubling it. That is the syncopated kick's rule exactly: the segment is shared
-and the position within it is what the pattern tracks.
-4. **A single element can have non-contiguous patterns.** The chords alternate
-every eight strikes, four loops or about 5.3 s: D, E, D, E, D, E, D. Neither
-chord's pattern is contiguous, because each is interrupted by the other chord,
-and every interruption starts a new span exactly as the breaks in the syncopated
-kick row do. The pad is the opposite case: one element, one unbroken run, laid
-over the same span that both chords divide between them.
+built from sustained synth voices that share one timbre throughout, so timbre
+cannot separate its patterns and the row labels simply name the pitch each one
+tracks. The D4 spans are built on 293 Hz with partials at 583, 883 and 1174 Hz,
+the E4 spans on 330 Hz with partials at 657, 990 and 1313 Hz, and the low span on
+196 Hz above its 147 Hz root, G3 over D3. Same gesture, different content in the
+segment, therefore distinct elements and distinct patterns. This is the rule
+from test_phrase_1 that a distinct element deserves a distinct pattern even when
+another shares its region exactly.
+2. **The off-beat strike is a second voice, not a softer stab.** Every D4 and E4
+stab is followed about two thirds of a second later by another strike. Measured
+60–170 ms after each, the stab's upper partials sit 24 dB above the F#3 line
+(183, 366 and 549 Hz) on the accent, while on the off-beat the F#3 line sits 6 dB
+above them. The F#3 envelope and the stab-upper envelope correlate −0.25 to −0.57
+at zero lag across the four middle spans and turn positive only at a lag of
+±0.6–0.8 s, half a loop either way: two voices in anti-phase, not one voice at
+two levels. The F#3 voice is the fifth tracked element.
+3. **That voice is one element with one contiguous pattern, and it stops partway.**
+It runs under both D4 and E4 and never stops for a change of pitch, so unlike
+those rows its pattern is a single run: 16 segments from 0.73 s on the same grid
+as the stabs. What identifies it is where its strike falls inside the segment,
+0.67–0.77 s in rather than on the boundary, which is why it answers the stab
+instead of doubling it. That is the syncopated kick's rule exactly: the segment
+is shared and the position within it is what the pattern tracks. After the
+sixteenth strike the alternating voice fades out rather than cutting: the F#3
+line is 30 dB down by 22.5 s and 60 dB down by 24 s, its 233 Hz companion dies
+at the same moment, and the next eight loops of the same grid carry no strike.
+The pitch itself returns at 32.68 s as a sustained tone over the closing section,
+but as a held note rather than a repeating strike, so no further F#3 pattern is
+claimed.
+4. **A single element can have non-contiguous patterns.** The D4 and E4 patterns
+take turns every four loops, about 5.4 s: D4, E4, D4, E4, D4, then the low G/D3
+span, then the slower D4. None of the first five is contiguous, because each is
+interrupted by the next, and every interruption starts a new span exactly as the
+breaks in the syncopated kick row do. The F#3 pattern is the opposite case: one
+element, one unbroken run, laid over the span that the others divide between
+them.
 5. **A pattern has one loop length, so a slower section is a new pattern.** The
-last D chord is gated more slowly: its accent loop measures 1.58 s where every
-earlier chord measures 1.34 s, and its strikes land at 33.11, 34.69, 36.27 and
-37.85. The voices also stop trading there, correlating +0.43 at zero lag, so the
-pad's 1.34 pattern ends at its last complete segment, 32.89 s, and the closing
-section stays a single pattern.
-6. **Starts are measured, not shared.** The seven chord spans begin at 0.73, 6.13,
-11.54, 16.86, 22.14, 27.82 and 33.11 s, each the first accented strike of its
-chord, and the pad's run begins at the same 0.73 s because that is where its own
-grid starts. Nothing is snapped to a common grid for its own sake: the pad and
-the chords agree because the audio puts them on the same pulse, and the pad's
-strike lands 0.74 s into the first segment, 0.67 s into the second, 0.74 s into
-the third.
-7. **The cycle count is an integer and the remainder is dropped.** 24 × 1.34 =
-32.16 s (0.73–32.89), 4 × 1.34 = 5.36 s (0.73–6.09) and 3 × 1.58 = 4.74 s
-(33.11–37.85). The recording is 38.9 s, so the 1.07 s tail after 37.85 and the
-sliver left at each chord change sit outside the regions: a pattern ends at its
-last complete segment. The pad's run stops at 32.89 rather than at the closing
-section's end because 1.34 no longer divides the audio past that point.
+last D4 span is gated more slowly: its loop measures 1.58 s where every earlier
+one measures 1.34 s, and its stabs land at 33.11, 34.69, 36.27 and 37.85. The
+voices also stop trading there, correlating +0.43 at zero lag, so the F#3 1.34
+pattern ends at its last strike and the closing section stays a single pattern.
+6. **Starts are measured, not shared.** The seven spans begin at 0.73, 6.13,
+11.54, 16.86, 22.14, 27.82 and 33.11 s, each the first accented stab of its
+span, and the F#3 run begins at the same 0.73 s because that is where its own
+grid starts. Nothing is snapped to a common grid for its own sake: the rows agree
+because the audio puts them on the same pulse, and the F#3 strike lands 0.74 s
+into the first segment, 0.67 s into the second, 0.74 s into the third.
+7. **The cycle count is the number of strikes heard, and the remainder is
+dropped.** Every span strikes four times, so every span counts four segments even
+where the fourth loop is cut short — by the next span arriving, or by the end of
+the file in the closing section. 4 × 1.34 = 5.36 s (0.73–6.09), 16 × 1.34 =
+21.44 s (0.73–22.17) and 4 × 1.58 = 6.32 s (33.11–39.43), that last one running
+0.5 s past the recording's 38.9 s. A pattern ends at its last complete strike, not
+at the last fraction of a loop the recording happens to contain.
