@@ -98,7 +98,7 @@ take turns every four loops, about 5.4 s: D4, E4, D4, E4, D4, then the low G/D3
 span, then the slower D4. None of the first five is contiguous, because each is
 interrupted by the next, and every interruption starts a new span exactly as the
 breaks in the syncopated kick row do. The F#3 pattern is the opposite case: one
-element, one unbroken run, laid over the span that the others divide between
+element, one unbroken run, laid over the span the others divide between
 them.
 5. **A pattern has one loop length, so a slower section is a new pattern.** The
 last D4 span is gated more slowly; its stabs land at 33.11, 34.60, 36.22 and
