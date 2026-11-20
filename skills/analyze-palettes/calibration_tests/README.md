@@ -82,9 +82,7 @@ spacing.
 1. **A tracked element can be a pitch rather than an instrument.** This palette is
 built from sustained synth voices that share one timbre throughout, so timbre
 cannot separate its patterns and the row labels simply name the pitch each one
-tracks. Again, the labels for each row (D4, E4, G/D3, and F#3) are arbitrary and here simply denote the prominent pitch, what would be distinct to a listener without quibbling over the exact harmonic content. Same gesture, different identity within the segment, therefore distinct elements and distinct patterns. This is the rule
-from test_audio_1 that a distinct element deserves a distinct pattern even when
-another shares its region exactly.
+tracks. Again, the labels are arbitrary and here simply denote the prominent pitch, what would be distinct to a listener, without quibbling over the exact harmonic content. Same gesture, different identity within the segment, therefore distinct elements and distinct patterns. 
 2. **The off-beat strike is a second voice, not a softer stab.** Every D4 and E4
 stab is followed about two thirds of a second later by another strike. Measured
 60–170 ms after each, the stab's upper partials sit 24 dB above the F#3 line
