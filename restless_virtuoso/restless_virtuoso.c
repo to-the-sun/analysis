@@ -4203,6 +4203,8 @@ static int restore_sound(int number)
     if (field) sscanf(field, ", preset %d", &preset);
     field = strstr(name, ", octave ");
     if (field) sscanf(field, ", octave %d", &octave);
+    if (octave < -VST_MAX_OCTAVE) octave = -VST_MAX_OCTAVE;
+    else if (octave > VST_MAX_OCTAVE) octave = VST_MAX_OCTAVE;
 
     int library = find_vst_library(plugin);
     if (library < 0) {
