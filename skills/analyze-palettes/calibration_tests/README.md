@@ -16,7 +16,7 @@ of its overlapping patterns.
 
 ## Purpose
 
-Outlined in this document are calibration tests which the algorithm implemented in the analyze-palettes skill must pass. The goal is for that algorithm, whatever form it takes, to identify the exact segments, patterns and phrases detailed below from the given test_phrase.wav files also residing in this directory. In doing so the analysis should treat those test_phrase.wav files as if they were real palettes. 
+Outlined in this document are calibration tests which the algorithm implemented in the analyze-palettes skill must pass. The goal is for that algorithm, whatever form it takes, to identify the exact segments, patterns and phrases detailed below from the given test_audio.wav files also residing in this directory. In doing so the analysis should treat those test_audio.wav files as if they were real palettes. 
 
 Each test phrase below will have a key with the "correct" stats that should be derived from the audio. Floating point values such as segment lengths etc. do not need to match absolutely perfectly but they must be close. A discussion will also follow as to why the values in the key are the desired ones. It is essential to understand the intent and the purpose of these algorithms in order to build methods that will generalize to any palette seen in the future, and not just resort to any short-sighted solution that happens to generate the correct answers. 
 
@@ -30,9 +30,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
   iteration, at the pattern's loop length.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
-# test_phrase_1.wav
+# test_audio_1.wav
 
-![test_phrase_1](test_phrase_1.png)
+![test_audio_1](test_audio_1.png)
 
 ## Results 
 
@@ -60,9 +60,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
    1.50 s of tail sit outside the regions: a pattern ends at its last complete
    segment
 
-# test_phrase_2.wav
+# test_audio_2.wav
 
-![test_phrase_2](test_phrase_2.png)
+![test_audio_2](test_audio_2.png)
 
 ## Results
 
@@ -86,7 +86,7 @@ tracks. The D4 spans are built on 293 Hz with partials at 583, 883 and 1174 Hz,
 the E4 spans on 330 Hz with partials at 657, 990 and 1313 Hz, and the low span on
 196 Hz above its 147 Hz root, G3 over D3. Same gesture, different content in the
 segment, therefore distinct elements and distinct patterns. This is the rule
-from test_phrase_1 that a distinct element deserves a distinct pattern even when
+from test_audio_1 that a distinct element deserves a distinct pattern even when
 another shares its region exactly.
 2. **The off-beat strike is a second voice, not a softer stab.** Every D4 and E4
 stab is followed about two thirds of a second later by another strike. Measured

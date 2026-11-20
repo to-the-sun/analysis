@@ -18,13 +18,13 @@ BG, WAVE, MUTED, RULE = "#07080c", "#5e6773", "#9aa2ae", "#262832"
 
 # name, color, band top/bottom (px), pattern start, loop, (index, segments) spans
 ROWS = {
-    "test_phrase_1": [
+    "test_audio_1": [
         ("bass", "#f12a1e", (232, 533), 0.0, 1.074910, [(0, 73)]),
         ("cymbal", "#f1ad03", (535, 835), 2.158, 2.149700, [(0, 35)]),
         ("kick", "#3ad07d", (837, 1137), 2.158, 2.149700, [(0, 35)]),
         ("kick", "#87fa96", (1139, 1439), 2.158, 2.149700, [(0, 6), (17, 5)]),
     ],
-    "test_phrase_2": [
+    "test_audio_2": [
         ("D4", "#f12a1e", (232, 472), (0.73, 11.54, 22.14), 1.340, [(0, 4)] * 3),
         ("D4", "#f4695a", (474, 714), (33.11,), 1.580, [(0, 4)]),
         ("E4", "#f1ad03", (716, 956), (6.13, 16.86), 1.340, [(0, 4)] * 2),
@@ -33,22 +33,22 @@ ROWS = {
     ],
 }
 
-RULES = {"test_phrase_1": (534, 836, 1138, 1439.5),
-         "test_phrase_2": (473, 715, 957, 1199, 1439.5)}
+RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
+         "test_audio_2": (473, 715, 957, 1199, 1439.5)}
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
 # or "center" to grow both ways from the band's midline
 WAVES = {
-    "test_phrase_1": [
+    "test_audio_1": [
         (232, 533, 0.543, 1.135, "bottom"),
         (535, 835, 0.006, 0.673, "bottom"),
         (837, 1137, 0.001, 0.695, "top"),
         (1139, 1439, 0.514, 1.143, "top"),
     ],
-    "test_phrase_2": [(232, 1439, 0.12, 0.52, "center")],
+    "test_audio_2": [(232, 1439, 0.12, 0.52, "center")],
 }
 
-TRACE = {"test_phrase_1": "peak", "test_phrase_2": "rms"}
+TRACE = {"test_audio_1": "peak", "test_audio_2": "rms"}
 PAD = 2  # px between a pattern box and its row edges
 
 

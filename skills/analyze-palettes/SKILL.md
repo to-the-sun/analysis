@@ -45,7 +45,7 @@ region, or a different length in each; both are normal, and neither is imposed
 by the tool. Uniform segment length is required only *within* a pattern, never
 across patterns or across the file. Measure each region on its own terms.
 
-`calibration_tests/test_phrase_1.png` illustrates this vocabulary
+`calibration_tests/test_audio_1.png` illustrates this vocabulary
 
 ## 0. Inputs and preparation
 
