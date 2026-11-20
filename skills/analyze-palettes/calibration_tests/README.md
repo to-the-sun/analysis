@@ -83,13 +83,8 @@ spacing.
 built from sustained synth voices that share one timbre throughout, so timbre
 cannot separate its patterns and the row labels simply name the pitch each one
 tracks. Again, the labels are arbitrary and here simply denote the prominent pitch, what would be distinct to a listener, without quibbling over the exact harmonic content. Same gesture, different identity within the segment, therefore distinct elements and distinct patterns. 
-2. **The off-beat strike is a second voice, not a softer stab.** Every D4 and E4
-stab is followed about two thirds of a second later by another strike. Measured
-60–170 ms after each, the stab's upper partials sit 24 dB above the F#3 line
-(183, 366 and 549 Hz) on the accent, while on the off-beat the F#3 line sits 6 dB
-above them. The F#3 envelope and the stab-upper envelope correlate −0.25 to −0.57
-at zero lag across the four middle spans and turn positive only at a lag of
-±0.6–0.8 s, half a loop either way: two voices in anti-phase, not one voice at
+2. **The off-beat strike is a second voice, not a softer stab.** Each of the initial D4 and E4
+stabs are followed about two thirds of a second later by another F#3 strike: two voices in anti-phase, not one voice at
 two levels. The F#3 voice is the fifth tracked element.
 3. **That voice is one element with one contiguous pattern, and it stops partway.**
 It runs under both D4 and E4 and never stops for a change of pitch, so unlike
