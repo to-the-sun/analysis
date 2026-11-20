@@ -161,7 +161,10 @@ that has already closed still has its sound saved. An instance started on a song
 `song.json` takes those sounds as the numbering, replacing whatever list the session
 already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
 starts, and instances started later begin on it. A drum sound keeps the seed that draws
-its sample set, so it comes back the same.
+its sample set, so it comes back the same. Closing a stems instance also writes a mix of
+every stem in its folder into the project folder, each placed at its lead-in and the lot
+peak-normalized to 1, named after the project folder itself, e.g.
+`2026-11-20-00-41-59.wav`.
 
 On startup the program lists every installed ASIO driver, then every MIDI input
 device.
