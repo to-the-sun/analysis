@@ -86,11 +86,11 @@ tracks. Again, the labels are arbitrary and here simply denote the prominent pit
 2. **The off-beat strike is a second voice, not a softer stab.** Each of the initial D4 and E4
 stabs are followed about two thirds of a second later by another F#3 strike: two voices in anti-phase, not one voice at
 two levels. The F#3 voice is the fifth tracked element.
-3. **That voice is one element with one contiguous pattern, and it stops partway.**
+3. **That voice is one element with one contiguous pattern, ending partway.**
 It runs under both D4 and E4 and never stops for a change of pitch, so unlike
 those rows its pattern is a single run of 16 segments. After the
 sixteenth strike the next eight loops of the same grid carry no strike.
-One could argue that pitch itself returns at 32.68 s as a sustained tone over the closing section,
+One could argue the pitch itself returns at 32.68 s as a sustained tone over the closing section,
 but as a held note rather than a repeating strike, so no further F#3 pattern is
 claimed.
 4. **A single element can have non-contiguous patterns.** The D4 and E4 patterns
@@ -107,21 +107,10 @@ the 24 gaps before them, 16% longer. Against that 1.35 s grid the four stabs
 fall 0.00, 0.14, 0.41 and 0.66 s late, so the lag accumulates rather than
 appearing once, as in a single displaced strike. That would leave the gaps either side of it
 summing to the old loop length and put the fourth stab back on the grid, but at
-0.66 s late, it does not. The third strike is only where the stretch becomes
+0.66 s late, it does not. The third strike is simply where the stretch becomes
 audible. The row therefore draws that as one uniform 1.58 s loop, within 0.09 s of each
-measured gap. The voices also stop trading there,
-correlating +0.43 at zero lag, so the F#3 1.34 pattern ends at its last strike
-and the closing section stays a single pattern.
-6. **Starts are measured, not shared.** The seven spans begin at 0.73, 6.13,
-11.54, 16.86, 22.14, 27.82 and 33.11 s, each the first accented stab of its
-span, and the F#3 run begins at the same 0.73 s because that is where its own
-grid starts. Nothing is snapped to a common grid for its own sake: the rows agree
-because the audio puts them on the same pulse, and the F#3 strike lands 0.74 s
-into the first segment, 0.67 s into the second, 0.74 s into the third.
-7. **The cycle count is the number of strikes heard, and the remainder is
-dropped.** Every span strikes four times, so every span counts four segments even
-where the fourth loop is cut short — by the next span arriving, or by the end of
-the file in the closing section. 4 × 1.34 = 5.36 s (0.73–6.09), 16 × 1.34 =
-21.44 s (0.73–22.17) and 4 × 1.58 = 6.32 s (33.11–39.43), that last one running
-0.5 s past the recording's 38.9 s. A pattern ends at its last complete strike, not
-at the last fraction of a loop the recording happens to contain.
+measured gap.
+6. **Starts are measured, not shared.** Nothing is snapped to a common grid for its own sake; the rows agree
+because the audio puts them on the same pulse.
+7. **The cycle count is the number of strikes heard and the remainder is
+dropped.** However, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment as its full length, as long as the tracked element exists within it as it does in the others. 
