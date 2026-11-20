@@ -105,9 +105,9 @@ last D4 span is gated more slowly; its stabs land at 33.11, 34.60, 36.22 and
 37.83 s, gaps of 1.49, 1.62 and 1.60 s that average 1.571 s against 1.350 s for
 the 24 gaps before them, 16% longer. Against that 1.35 s grid the four stabs
 fall 0.00, 0.14, 0.41 and 0.66 s late, so the lag accumulates rather than
-appearing once, as in a single displaced strike. That would leave the gaps either side of it
-summing to the old loop length and put the fourth stab back on the grid, but at
-0.66 s late, it does not. The third strike is simply where the stretch becomes
+appearing once. This denies the theory of a single displaced strike, which would leave the gaps either side of it
+summing to the old loop length and put the fourth stab back on the grid. At
+0.66 s late, it does not; the third strike is simply where the stretch becomes
 audible. The row therefore draws that as one uniform 1.58 s loop, within 0.09 s of each
 measured gap.
 6. **Starts are measured, not shared.** Nothing is snapped to a common grid for its own sake; the rows agree
