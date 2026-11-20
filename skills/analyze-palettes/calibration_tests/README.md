@@ -88,15 +88,9 @@ stabs are followed about two thirds of a second later by another F#3 strike: two
 two levels. The F#3 voice is the fifth tracked element.
 3. **That voice is one element with one contiguous pattern, and it stops partway.**
 It runs under both D4 and E4 and never stops for a change of pitch, so unlike
-those rows its pattern is a single run: 16 segments from 0.73 s on the same grid
-as the stabs. What identifies it is where its strike falls inside the segment,
-0.67–0.77 s in rather than on the boundary, which is why it answers the stab
-instead of doubling it. That is the syncopated kick's rule exactly: the segment
-is shared and the position within it is what the pattern tracks. After the
-sixteenth strike the alternating voice fades out rather than cutting: the F#3
-line is 30 dB down by 22.5 s and 60 dB down by 24 s, its 233 Hz companion dies
-at the same moment, and the next eight loops of the same grid carry no strike.
-The pitch itself returns at 32.68 s as a sustained tone over the closing section,
+those rows its pattern is a single run of 16 segments. After the
+sixteenth strike the next eight loops of the same grid carry no strike.
+One could argue that pitch itself returns at 32.68 s as a sustained tone over the closing section,
 but as a held note rather than a repeating strike, so no further F#3 pattern is
 claimed.
 4. **A single element can have non-contiguous patterns.** The D4 and E4 patterns
