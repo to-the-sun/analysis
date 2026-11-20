@@ -123,7 +123,7 @@ the 24 gaps before them, 16% longer. Against that 1.35 s grid the four stabs
 fall 0.00, 0.14, 0.41 and 0.66 s late, so the lag accumulates rather than
 appearing once, as in a single displaced strike. That would leave the gaps either side of it
 summing to the old loop length and put the fourth stab back on the grid, but at
-0.66 s late it does not. The third strike is only where the stretch becomes
+0.66 s late, it does not. The third strike is only where the stretch becomes
 audible. The row therefore draws that as one uniform 1.58 s loop, within 0.09 s of each
 measured gap. The voices also stop trading there,
 correlating +0.43 at zero lag, so the F#3 1.34 pattern ends at its last strike
