@@ -69,10 +69,13 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | Tracked element | Segment length (s) | Segments | Region (s) |
 |---|---:|---:|---|
 | D4 | 1.34 | 4, 4, 4 | 0.73–6.09, 11.54–16.90, 22.14–27.50 |
+| D4 | 1.58 | 4 | 33.11–39.43 |
 | E4 | 1.34 | 4, 4 | 6.13–11.49, 16.86–22.22 |
 | G/D3 | 1.34 | 4 | 27.82–33.18 |
-| D4 | 1.58 | 4 | 33.11–39.43 |
 | F#3 | 1.34 | 16 | 0.73–22.17 |
+
+The second D4 row is drawn in a lighter red: same element, slower segment
+spacing.
 
 ## Discussion
 
