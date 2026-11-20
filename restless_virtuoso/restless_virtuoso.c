@@ -5082,8 +5082,11 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (options.randomScale) {
         const Scale *scale = &scales[rand() % (int)(sizeof scales / sizeof *scales)];
+        char line[128];
         scaleMask = scale_mask(scale->pitches);
-        log_line("random scale: %s (%s)", scale->name, scale->pitches);
+        snprintf(line, sizeof line, "  random scale: %s (%s)", scale->name, scale->pitches);
+        console_line(line);
+        log_trace("random scale: %s (%s)\n", scale->name, scale->pitches);
     }
 
     callbacks.bufferSwitch = on_buffer_switch;
