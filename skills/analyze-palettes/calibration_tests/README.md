@@ -94,7 +94,7 @@ One could argue the pitch itself returns at 32.68 s as a sustained tone over the
 but as a held note rather than a repeating strike, so no further F#3 pattern is
 claimed.
 4. **A single element can have non-contiguous patterns.** The D4 and E4 patterns
-take turns every four loops, about 5.4 s: D4, E4, D4, E4, D4, then the low G/D3
+take turns every four loops: D4, E4, D4, E4, D4, then the low G/D3
 span, then the slower D4. None of the first five is contiguous, because each is
 interrupted by the next, and every interruption starts a new span exactly as the
 breaks in the syncopated kick row do. The F#3 pattern is the opposite case: one
