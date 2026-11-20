@@ -85,7 +85,7 @@ cannot separate its patterns and the row labels simply name the pitch each one
 tracks. Again, the labels are arbitrary and here simply denote the prominent pitch, what would be distinct to a listener, without quibbling over the exact harmonic content. Same gesture, different identity, therefore distinct elements and distinct patterns. 
 2. **The off-beat strike is a second voice, not a softer stab.** Each of the initial D4 and E4
 stabs are followed about two thirds of a second later by another F#3 strike: two voices in anti-phase, not one voice at
-two levels. The F#3 voice is the fifth tracked element, because it has a distinct identity.
+two levels. The F#3 voice is the fifth tracked element, because of its distinct identity.
 3. **That voice is one element with one contiguous pattern, ending partway.**
 It runs under both D4 and E4 and never stops for a change of pitch, so unlike
 those rows its pattern is a single run of 16 segments. After the
