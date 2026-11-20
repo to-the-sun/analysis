@@ -88,8 +88,7 @@ When `instrument` is a MIDI input, two more keys add instruments to it:
   }
   ```
 
-    Each plugin's range is printed as it loads, and a plugin with no entry is named in a
-  warning and left at 0-127. Entries are named by their `.dll` file name or the
+    A plugin with no entry is left at 0-127. Entries are named by their `.dll` file name or the
   plugin's own name, case-insensitive. `presets` is how many presets the plugin
   actually has, and
   random presets are drawn from it instead of the count the plugin reports. `range`
@@ -166,8 +165,7 @@ every stem in its folder into the project folder, each placed at its lead-in and
 peak-normalized to 1, named after the project folder itself, e.g.
 `2026-11-20-00-41-59.wav`.
 
-On startup the program lists every installed ASIO driver, then every MIDI input
-device.
+`--list` prints every installed ASIO driver and every MIDI input device.
 
 In instrument mode, left-click anywhere in the console to move up to the next shared
 sound, or to draw a new one when it is already on the highest, and right-click to move

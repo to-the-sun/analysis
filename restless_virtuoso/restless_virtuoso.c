@@ -2998,11 +2998,6 @@ static void init_vst_taste(int library)
         vstLibraryHigh[library] -= excess - excess / 2;
     }
 
-    char line[192];
-    if (stats) snprintf(line, sizeof line, "  %s: range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
-    else snprintf(line, sizeof line, "  warning: no stats entry for %s, range %d-%d", vstNames[library], vstLibraryLow[library], vstLibraryHigh[library]);
-    console_line(line);
-
     int count = vstLibraryPresets[library];
     if (count <= 0) return;
 
@@ -4547,12 +4542,6 @@ static int open_driver(const char *name, HWND window)
     return 0;
 }
 
-static void print_selection(const int *channels, int count)
-{
-    for (int i = 0; i < count; i++) printf("%s%d", i ? "," : "", channels[i] + 1);
-    if (!count) printf("none");
-}
-
 static int select_channels(const char *spec, int available, int *channels, int *count,
                            int defaultCount, const char *what)
 {
@@ -5316,11 +5305,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     if (open_driver(driver, window) != 0) goto done;
     log_trace("driver opened\n");
 
-    printf("%s\n\n", g.driverName);
-    list_devices();
-    printf("\n");
-    log_trace("devices listed\n");
-
     if (playlistMode || instrumentMode) {
         if (select_channels(options.in, g.inCount, g.inCh, &g.nIn, 0, "input") != 0) goto done;
     } else if (options.inputChannel > 0 && !options.in) {
@@ -5366,13 +5350,6 @@ static int run(int argc, char **argv, const wchar_t *folder)
     log_trace("buffers created\n");
     rating_start();
 
-    printf("  %d Hz, %d frames (%.2f ms), latency %d/%d frames\n",
-           (int)g.rate, g.bufferSize, 1000.0 * g.bufferSize / g.rate, g.latencyIn, g.latencyOut);
-    printf("  in ");
-    print_selection(g.inCh, g.nIn);
-    printf(" -> out ");
-    print_selection(g.outCh, g.nOut);
-    printf("\n");
     if (playlistMode) {
         printf("  %d audio files mixed from ", stemCount);
         print_wide_path(playlistFolder);
