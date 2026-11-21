@@ -1312,6 +1312,7 @@ static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
 static volatile double ratingValue, ratingBurst;
 static volatile int ratingBar;
+static int ratingGrid, ratingPoint;   /* the jamming bar in ms, and the next point on it */
 static struct { double sum; int count; } ratingSteps[RATING_STEPS];
 static int ratingStepHead, ratingStepCount;
 static double ratingSum;
@@ -1407,6 +1408,7 @@ static void rating_drop(void)
     ratingValue = 0.0;
     ratingBurst = 0.0;
     ratingBar = 0;
+    ratingGrid = ratingPoint = 0;
     ratingStepHead = ratingStepCount = ratingCount = 0;
     ratingSum = 0.0;
 
@@ -2136,40 +2138,38 @@ static void recording_start(void)
    it holds a bar, and the next take starts at the next point of the new bar. */
 static void jamming_poll(double recitation)
 {
-    static int grid, point;      /* the bar length in ms, and the next point on it */
-
     int length = ratingBar;
     double now = rating_elapsed() * 1000.0;
     int above = rating_current() > recitation;
 
     if (length <= 0 || now < 0.0) return;
 
-    if (length != grid) {
+    if (length != ratingGrid) {
         if (recording.active) recording_stop(1);
-        grid = length;
-        point = (int)ceil(now / grid) * grid;
+        ratingGrid = length;
+        ratingPoint = (int)ceil(now / ratingGrid) * ratingGrid;
         return;
     }
 
     if (!recording.active) {
-        if (now < point) return;
+        if (now < ratingPoint) return;
         if (above) {
             recording_start();
-            recording.point = point;
-            recording.bar = grid;
+            recording.point = ratingPoint;
+            recording.bar = ratingGrid;
         }
-        point = (int)ceil(now / grid) * grid;
+        ratingPoint = (int)ceil(now / ratingGrid) * ratingGrid;
         return;
     }
 
     if (!above) {
         recording_stop(1);
-        point = (int)ceil(now / grid) * grid;
+        ratingPoint = (int)ceil(now / ratingGrid) * ratingGrid;
         return;
     }
 
-    while (now >= recording.point + grid) {
-        recording.point += grid;
+    while (now >= recording.point + ratingGrid) {
+        recording.point += ratingGrid;
         recording.bars++;
     }
 }
