@@ -159,8 +159,9 @@ Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
 instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
 seconds (`"3 16 drum samples.wav": 1.250000`), and a `"random_scale"` object such as
-`{ "scale": "Dorian", "root": "D" }` once a scale was playing during the song, which
+`{ "scale": "Dorian", "key": "D" }` once a scale was playing during the song, which
 every instance with `random_scale` set to 1 takes over when the song is started again.
+Songs written before the subkey was named `key` hold it as `"root"`, which is still read.
 Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
@@ -191,15 +192,22 @@ analyzers of an instance share one group buffer, so their scores accumulate toge
 and give the instance one rating: the average of the scores from the last 15 s of
 audio, rolling. In an instrument instance the group starts again with a new sound, so
 the rating does too. The console's last line shows it and replaces it as it changes,
-beside a `score`: the last 100 ms of scores, but from the instance's own side only —
-its stems when it plays a folder, its own audio when it has an analyzer of it.
+beside a `score`: the average of the scores that arrived in the last 100 ms, from
+the instance's own side only — its stems when it plays a folder, its own audio when
+it has an analyzer of it. An arriving score redoes it; scores ageing out of the span
+leave it showing what it had.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
 all sharing a second group buffer with its own analyzer, so their scores together give
-it a separate jamming rating. It then records while the jamming rating is above the
-recitation rating, and its takes are written into that instance's `[stems]` folder.
-Closing that instance drops the take in progress and its memory instead of writing it
+it a separate jamming rating. Its bar is the distance to its own high point in whole
+milliseconds, `round(fabs(highest_peak_ms))`, and its bar points are multiples of that
+from the loop's zero.
+It records from a bar point its jamming rating passes above the recitation rating while
+staying above it to the next, so a take holds at least one bar, is cut to the bars it
+held, and is written into that instance's `[stems]` folder. A bar length that changes
+releases the take if it has held a bar, and the next take starts at the next point of
+the new bar. Closing that instance drops the take in progress and its memory instead of writing it
 as a project of its own, and the rating starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to
