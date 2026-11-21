@@ -560,6 +560,7 @@ static double stem_lead(const wchar_t *file);
 static void set_stem_lead(const wchar_t *file, double lead);
 static void save_stem_leads(void);
 static int sound_mode(int number);
+static int stem_sound_collides(const wchar_t *file, int sound);
 static int stem_muted(const wchar_t *file);
 static const char *instrumentName;
 static wchar_t *audioFiles[QUEUE_FILES];
@@ -1277,12 +1278,12 @@ static void take_finish(void)
 /* Every instance runs the cumulative flux analyzer over the audio it plays, at the
    15 s window and four bands the offline tools use. A stems instance runs one
    analyzer per stem it plays, and an instrument instance with a stems instance
-   running adds one per stem that instance plays. Every analyzer in a group shares
-   one buffer, so their scores accumulate together and give the instance's rating. */
+   running adds one per stem that instance plays, except the stems whose sounds
+   collide with the one it is playing. Every analyzer in a group shares one buffer,
+   so their scores accumulate together and give the instance's rating. */
 
 #define RATING_WINDOW_MS 15000
 #define RATING_BANDS 4
-#define RATING_ANALYZERS 32
 #define RATING_STEPS (RATING_WINDOW_MS / 100)
 #define RATING_PROJECTS L"D:\\[Library]\\[Audio]\\[Works]\\[Projects]"
 
@@ -1301,8 +1302,8 @@ typedef struct {
 } RatingCopy;
 
 static SharedTransientBuffer ratingScores;
-static RatingCopy ratingCopies[RATING_ANALYZERS];
-static int ratingCopyCount;
+static RatingCopy *ratingCopies;
+static int ratingCopyCount, ratingCopyAlloc;
 static TransientAnalyzer *ratingOwn;
 static Track *ratingStems;
 static double ratingStemLeads[QUEUE_FILES];
@@ -1321,7 +1322,7 @@ static int ratingFeedSize, ratingHead, ratingTail, ratingCount;
 static int ratingSound, ratingStarted;
 
 static volatile LONG ratingRequest, ratingLoop;
-static int ratingRequestMode;
+static int ratingRequestMode, ratingRequestSound;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
 static wchar_t ratingRequestedFolder[1024];
@@ -1389,7 +1390,9 @@ static void rating_drop(void)
         analyzer_destroy(ratingCopies[i].analyzer);
         free(ratingCopies[i].block);
     }
-    ratingCopyCount = 0;
+    ratingCopyCount = ratingCopyAlloc = 0;
+    free(ratingCopies);
+    ratingCopies = NULL;
     analyzer_destroy(ratingOwn);
     ratingOwn = NULL;
 
@@ -1414,8 +1417,15 @@ static void rating_drop(void)
 
 static int rating_add(const Track *track, double lead)
 {
-    if (ratingCopyCount == RATING_ANALYZERS) return 0;
     if (track && (!track->samples || !track->frames || !track->rate)) return 0;
+
+    if (ratingCopyCount == ratingCopyAlloc) {
+        int grown = ratingCopyAlloc ? ratingCopyAlloc * 2 : 8;
+        RatingCopy *bigger = realloc(ratingCopies, (size_t)grown * sizeof *bigger);
+        if (!bigger) return 0;
+        ratingCopies = bigger;
+        ratingCopyAlloc = grown;
+    }
 
     RatingCopy *copy = &ratingCopies[ratingCopyCount];
     copy->track = track;
@@ -1437,7 +1447,7 @@ static int rating_add(const Track *track, double lead)
     return 1;
 }
 
-static int rating_load(const wchar_t *folder)
+static int rating_load(const wchar_t *folder, int sound)
 {
     wchar_t *path = long_path(folder);
     if (!path) return 0;
@@ -1471,7 +1481,8 @@ static int rating_load(const wchar_t *folder)
     qsort(files, (size_t)count, sizeof files[0], compare_names);
     ratingStems = count ? calloc((size_t)count, sizeof *ratingStems) : NULL;
     for (int i = 0; i < count; i++) {
-        if (ratingStems && decode_track(&ratingStems[ratingStemCount], files[i]) == 0) {
+        int covered = sound > 0 && stem_sound_collides(files[i], sound);
+        if (!covered && ratingStems && decode_track(&ratingStems[ratingStemCount], files[i]) == 0) {
             ratingStemLeads[ratingStemCount] = stem_lead(files[i]);
             ratingStemCount++;
         }
@@ -1480,7 +1491,7 @@ static int rating_load(const wchar_t *folder)
     return ratingStemCount;
 }
 
-static void rating_build(int mode, const wchar_t *folder)
+static void rating_build(int mode, const wchar_t *folder, int sound)
 {
     rating_drop();
 
@@ -1493,7 +1504,7 @@ static void rating_build(int mode, const wchar_t *folder)
     }
 
     ratingOwn = analyzer_create(1.0, &ratingScores, NULL, NULL, NULL, RATING_WINDOW_MS, RATING_BANDS);
-    if (mode == RATING_JAMMING && folder[0] && rating_load(folder))
+    if (mode == RATING_JAMMING && folder[0] && rating_load(folder, sound))
         for (int i = 0; i < ratingStemCount; i++) rating_add(&ratingStems[i], ratingStemLeads[i]);
 }
 
@@ -1543,16 +1554,17 @@ static DWORD WINAPI rating_worker(void *unused)
 
         LONG request = InterlockedCompareExchange(&ratingRequest, 0, 0);
         if (request != applied) {
-            int mode;
+            int mode, sound;
             wchar_t folder[1024];
 
             EnterCriticalSection(&ratingLock);
             mode = ratingRequestMode;
+            sound = ratingRequestSound;
             wcsncpy(folder, ratingRequestFolder, 1023);
             folder[1023] = 0;
             LeaveCriticalSection(&ratingLock);
 
-            rating_build(mode, folder);
+            rating_build(mode, folder, sound);
             applied = request;
             filled = 0;
             pushed = 0;
@@ -1684,10 +1696,11 @@ static void rating_stop(void)
     }
 }
 
-static void rating_request(int mode, const wchar_t *folder)
+static void rating_request(int mode, const wchar_t *folder, int sound)
 {
     EnterCriticalSection(&ratingLock);
     ratingRequestMode = mode;
+    ratingRequestSound = sound;
     wcsncpy(ratingRequestFolder, folder, 1023);
     ratingRequestFolder[1023] = 0;
     InterlockedIncrement(&ratingRequest);
@@ -1890,6 +1903,20 @@ static int stems_collide(const wchar_t *a, const wchar_t *b)
     stem_key(a, keyA, 16);
     stem_key(b, keyB, 16);
     return !wcscmp(keyA, keyB);
+}
+
+/* Whether a stem's sound collides with a sound being played, as it does for
+   muting: every drum sample set with every other, a VST preset only with the same
+   sound number, and an `audio` take with every other. */
+static int stem_sound_collides(const wchar_t *file, int sound)
+{
+    int mode = stem_mode(file);
+    if (sound_mode(sound) != mode) return 0;
+    if (mode != MODE_SYNTH) return 1;
+
+    wchar_t key[16];
+    stem_key(file, key, 16);
+    return _wtoi(key) == sound;
 }
 
 static int active_span(const Track *track, double *begin, double *end)
@@ -2144,12 +2171,12 @@ static void rating_poll(void)
         ratingRequestedGeneration = generation;
         wcsncpy(ratingRequestedFolder, folder, 1023);
         ratingRequestedFolder[1023] = 0;
-        rating_request(mode, folder);
+        rating_request(mode, folder, g.soundNumber);
     }
 
     if (instrumentMode && g.soundNumber != ratingSound) {
         ratingSound = g.soundNumber;
-        if (ratingThread) rating_request(ratingRequestedMode, ratingRequestedFolder);
+        if (ratingThread) rating_request(ratingRequestedMode, ratingRequestedFolder, g.soundNumber);
         recording_stop(1);
     }
 
@@ -2328,7 +2355,7 @@ static void refresh_playlist(void)
         cue->length = playlist_length();
         InterlockedIncrement(&cue->generation);
     }
-    if (ratingThread) rating_request(RATING_RECITATION, L"");
+    if (ratingThread) rating_request(RATING_RECITATION, L"", 0);
 }
 
 static void mute_stems(void)
