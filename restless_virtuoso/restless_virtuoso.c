@@ -194,11 +194,25 @@ static void log_error(const char *format, ...)
     }
 }
 
+static double log_elapsed(void)
+{
+    static LARGE_INTEGER frequency, start;
+    LARGE_INTEGER now;
+
+    if (!frequency.QuadPart) {
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&start);
+    }
+    QueryPerformanceCounter(&now);
+    return (double)(now.QuadPart - start.QuadPart) / (double)frequency.QuadPart;
+}
+
 static void log_trace(const char *format, ...)
 {
     if (!errorLog) open_error_log();
     if (!errorLog) return;
 
+    fprintf(errorLog, "[%9.3f %5lu] ", log_elapsed(), (unsigned long)GetCurrentThreadId());
     va_list args;
     va_start(args, format);
     vfprintf(errorLog, format, args);
@@ -2638,14 +2652,30 @@ static intptr_t host_callback(AEffect *effect, int32_t opcode, int32_t index, in
     }
 }
 
-static AEffect *create_effect(HMODULE library)
+/* Plugins print from their own constructors and destructors, so every instance built
+   and closed is named in the log together with the reason it was made. */
+static AEffect *create_effect(int library, const char *reason)
 {
-    AEffect *(*entry)(VstHostCallbackProc) = (void *)GetProcAddress(library, "VSTPluginMain");
-    if (!entry) entry = (void *)GetProcAddress(library, "main");
-    if (!entry) return NULL;
+    const char *name = vstNames[library];
+    log_trace("vst create '%s' for %s\n", name, reason);
+
+    AEffect *(*entry)(VstHostCallbackProc) = (void *)GetProcAddress(vstLibraries[library], "VSTPluginMain");
+    if (!entry) entry = (void *)GetProcAddress(vstLibraries[library], "main");
+    if (!entry) {
+        log_trace("vst create '%s' failed: no entry point\n", name);
+        return NULL;
+    }
 
     AEffect *effect = entry(host_callback);
-    if (!effect || effect->magic != kVstEffectMagic) return NULL;
+    if (!effect || effect->magic != kVstEffectMagic) {
+        log_trace("vst create '%s' failed: %p, magic 0x%08lx\n", name, (void *)effect,
+                  effect ? (unsigned long)effect->magic : 0UL);
+        return NULL;
+    }
+
+    log_trace("vst created '%s' %p: %d programs, %d params, %d in, %d out, flags 0x%lx\n", name,
+              (void *)effect, effect->numPrograms, effect->numParams, effect->numInputs,
+              effect->numOutputs, (unsigned long)effect->flags);
     return effect;
 }
 
@@ -2744,20 +2774,31 @@ static void send_vst_program_change(int program)
    time. Only the active instance is processed. */
 static int start_vst(int library, int program)
 {
+    const char *name = vstNames[library];
     int fresh = vstInstances[library] == NULL;
-    AEffect *effect = fresh ? create_effect(vstLibraries[library]) : vstInstances[library];
-    if (!effect) return -1;
+    log_trace("vst start '%s' preset %d (%s)\n", name, program + 1, fresh ? "new instance" : "already open");
+
+    AEffect *effect = fresh ? create_effect(library, "start") : vstInstances[library];
+    if (!effect) {
+        log_trace("vst start '%s' failed: no effect\n", name);
+        return -1;
+    }
 
     if (fresh) {
         if (!effect->dispatcher || (!(effect->flags & effFlagsIsSynth) && effect->numInputs > 0) ||
             effect->numOutputs < 1 || effect->numOutputs > VST_MAX_OUTPUTS ||
             (!effect->processReplacing && !effect->process)) {
+            log_trace("vst start '%s' rejected: dispatcher %p, inputs %d, outputs %d, replacing %d, "
+                      "process %d, flags 0x%lx\n", name, (void *)effect->dispatcher, effect->numInputs,
+                      effect->numOutputs, effect->processReplacing != NULL, effect->process != NULL,
+                      (unsigned long)effect->flags);
             effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
             return -1;
         }
 
         effect->dispatcher(effect, effOpen, 0, 0, NULL, 0);
         vstInstances[library] = effect;
+        log_trace("vst opened '%s' %p\n", name, (void *)effect);
     }
 
     vstEffect = effect;
@@ -2776,6 +2817,7 @@ static int start_vst(int library, int program)
         effect->dispatcher(effect, effSetProgram, 0, vstProgram, NULL, 0);
 
     if (vst_start() != 0) {
+        log_trace("vst start '%s' failed: no buffers\n", name);
         vst_stop();
         vstEffect = NULL;
         vstActiveLibrary = -1;
@@ -2786,6 +2828,8 @@ static int start_vst(int library, int program)
         return -1;
     }
     if (vstPresetCount > 1) send_vst_program_change(vstProgram);
+    log_trace("vst playing '%s' preset %d/%d, octave %+d, %d outputs\n", name, vstProgram + 1,
+              vstPresetCount, vstOctave, vstOutputCount);
     return 0;
 }
 
@@ -2806,6 +2850,7 @@ static void add_vst(const wchar_t *path)
         WideCharToMultiByte(CP_ACP, 0, file, -1, vstNames[vstLibraryCount], VST_NAME, NULL, NULL);
         vstLibraries[vstLibraryCount] = library;
         init_vst_taste(vstLibraryCount);
+        log_trace("vst loaded %d '%s'\n", vstLibraryCount, vstNames[vstLibraryCount]);
         vstLibraryCount++;
     } else FreeLibrary(library);
 
@@ -3029,13 +3074,16 @@ static void init_vst_taste(int library)
     VstStats *stats = find_vst_stats("", vstNames[library]);
 
     if (!stats || stats->presets <= 0) {
-        AEffect *effect = create_effect(vstLibraries[library]);
+        log_trace("vst taste '%s': no stats entry, probing the plugin\n", vstNames[library]);
+        AEffect *effect = create_effect(library, "stats probe");
         if (effect && effect->dispatcher) {
             char name[VST_NAME];
             effect_name(effect, name, sizeof name);
             VstStats *named = find_vst_stats(name, vstNames[library]);
             if (named && named->presets > 0) stats = named;
             vstLibraryPresets[library] = stats && stats->presets > 0 ? stats->presets : effect->numPrograms;
+            log_trace("vst taste '%s': calls itself '%s', %d programs\n", vstNames[library], name,
+                      effect->numPrograms);
             effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
         }
     } else vstLibraryPresets[library] = stats->presets;
@@ -3051,6 +3099,9 @@ static void init_vst_taste(int library)
         vstLibraryLow[library] += excess / 2;
         vstLibraryHigh[library] -= excess - excess / 2;
     }
+    log_trace("vst taste '%s': %d presets, notes %d-%d, from the %s\n", vstNames[library],
+              vstLibraryPresets[library], vstLibraryLow[library], vstLibraryHigh[library],
+              stats ? "stats file" : "plugin");
 
     int count = vstLibraryPresets[library];
     if (count <= 0) return;
@@ -3315,6 +3366,9 @@ static void render_instruments(float *dst, int outputs, int frames)
 
 static void suspend_vst_effect(void)
 {
+    if (vstEffect)
+        log_trace("vst suspend '%s' preset %d\n",
+                  vstActiveLibrary >= 0 ? vstNames[vstActiveLibrary] : "unknown", vstProgram + 1);
     taste_flush();
     vst_stop();
     vstEffect = NULL;
@@ -3326,6 +3380,7 @@ static void close_vst_effect(void)
     suspend_vst_effect();
     for (int i = 0; i < VST_MAX_PLUGINS; i++) {
         if (!vstInstances[i]) continue;
+        log_trace("vst close '%s' %p\n", vstNames[i], (void *)vstInstances[i]);
         vstInstances[i]->dispatcher(vstInstances[i], effClose, 0, 0, NULL, 0);
         vstInstances[i] = NULL;
     }
@@ -4121,18 +4176,31 @@ static int find_vst_library(const char *name)
     for (int i = 0; i < vstLibraryCount; i++) {
         size_t length = strlen(vstNames[i]);
         if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
-        if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
+        if (!_strnicmp(vstNames[i], name, length) && !name[length]) {
+            log_trace("vst lookup '%s': library %d '%s'\n", name, i, vstNames[i]);
+            return i;
+        }
     }
 
+    /* The sound's plugin name is not a file name, so every plugin is built in turn
+       and asked for its own name, printing from its constructor and destructor. */
+    log_trace("vst lookup '%s': no file name matches, probing all %d plugins\n", name, vstLibraryCount);
+
     for (int i = 0; i < vstLibraryCount; i++) {
-        AEffect *effect = create_effect(vstLibraries[i]);
-        if (!effect || !effect->dispatcher) continue;
+        AEffect *effect = create_effect(i, "name probe");
+        if (!effect || !effect->dispatcher) {
+            log_trace("vst lookup '%s': plugin %d '%s' has no dispatcher\n", name, i, vstNames[i]);
+            continue;
+        }
 
         char effectName[VST_NAME];
         effect_name(effect, effectName, sizeof effectName);
+        log_trace("vst lookup '%s': plugin %d '%s' calls itself '%s'\n", name, i, vstNames[i], effectName);
         effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
         if (effectName[0] && !_stricmp(effectName, name)) return i;
     }
+
+    log_trace("vst lookup '%s': no plugin matches\n", name);
     return -1;
 }
 
@@ -4154,6 +4222,7 @@ static int restore_sound(int number)
     InterlockedExchange(&soundList->lock, 0);
     if (!found) return -1;
     name[SOUND_NAME - 1] = 0;
+    log_trace("vst restore sound %d '%s'\n", number, name);
 
     if (strstr(name, " drum samples")) {
         if (!drumCount) return -1;
@@ -4313,8 +4382,10 @@ static void step_sound(int step)
 
 static void close_vst(void)
 {
+    log_trace("vst shutdown, %d libraries\n", vstLibraryCount);
     close_vst_effect();
     for (int i = 0; i < vstLibraryCount; i++) {
+        log_trace("vst unload '%s'\n", vstNames[i]);
         FreeLibrary(vstLibraries[i]);
         free(vstTastes[i]);
         vstTastes[i] = NULL;
