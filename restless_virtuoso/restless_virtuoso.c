@@ -1538,6 +1538,9 @@ static DWORD WINAPI rating_worker(void *unused)
     float *block = NULL;
     int rate = 0, hop = 1, step = 0, filled = 0;
     long long pushed = 0;
+    double scoreSum = 0.0;
+    int scoreCount = 0;
+    ULONGLONG scoreUntil = 0;
     LONG applied = 0;
 
     if (!chunk) return 0;
@@ -1561,11 +1564,17 @@ static DWORD WINAPI rating_worker(void *unused)
             applied = request;
             filled = 0;
             pushed = 0;
+            scoreSum = 0.0;
+            scoreCount = 0;
+            scoreUntil = 0;
         }
 
         if (InterlockedExchange(&ratingLoop, 0)) {
             ratingStepCount = ratingCount = 0;
             ratingSum = ratingValue = ratingBurst = 0.0;
+            scoreSum = 0.0;
+            scoreCount = 0;
+            scoreUntil = 0;
         }
 
         int current = (int)g.rate;
@@ -1609,14 +1618,22 @@ static DWORD WINAPI rating_worker(void *unused)
         double sum = ratingScores.total_score_sum - sumBefore;
         int count = ratingScores.score_count - countBefore;
 
-        /* The score is this instance's own side of the last 100 ms: its own audio when
-           it has an analyzer of it, otherwise the stems it is playing. A span with no
-           scores in it has nothing to average, so the score holds its last value. */
+        /* The score is the average of the scores that arrived in the last 100 ms, from
+           this instance's own side: its own audio when it has an analyzer of it,
+           otherwise the stems it is playing. A score arriving redoes it; scores
+           ageing out of the span leave it alone. */
         if (!ratingOwn) {
             ownSum = sum;
             ownCount = count;
         }
-        if (ownCount > 0) ratingBurst = ownSum / ownCount;
+        if (ownCount > 0) {
+            ULONGLONG now = GetTickCount64();
+            if (now >= scoreUntil) scoreSum = 0.0, scoreCount = 0;
+            scoreSum += ownSum;
+            scoreCount += ownCount;
+            scoreUntil = now + 100;
+            ratingBurst = scoreSum / scoreCount;
+        }
 
         if (ratingStepCount == RATING_STEPS) {
             ratingSum -= ratingSteps[ratingStepHead].sum;
