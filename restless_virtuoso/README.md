@@ -171,7 +171,8 @@ starts, and instances started later begin on it. A drum sound keeps the seed tha
 its sample set, so it comes back the same. Closing a stems instance also writes a mix of
 every stem in its folder into the project folder, each placed at its lead-in and the lot
 peak-normalized to 1, named after the project folder itself, e.g.
-`2026-11-20-00-41-59.wav`.
+`2026-11-20-00-41-59.wav`. A copy of it goes into `D:\[Library]\[Audio]\[Works]`
+as well, when that folder exists.
 
 `--list` prints every installed ASIO driver and every MIDI input device.
 

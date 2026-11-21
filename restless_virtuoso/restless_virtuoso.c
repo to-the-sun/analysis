@@ -4006,6 +4006,23 @@ static float mix_sample(const MixStem *stem, drwav_uint64 frame, int output)
     return stem->samples[(size_t)(frame - stem->start) * stem->channels + (size_t)output % stem->channels];
 }
 
+/* The finished mix also lands in the works library, when that folder is there. */
+static void copy_mix(const wchar_t *path)
+{
+    static const wchar_t works[] = L"D:\\[Library]\\[Audio]\\[Works]";
+    DWORD attributes = GetFileAttributesW(works);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return;
+
+    const wchar_t *name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    wchar_t target[1200];
+    int written = swprintf(target, 1200, L"%ls\\%ls", works, name);
+    if (written < 0 || written >= 1200) return;
+
+    if (CopyFileW(path, target, FALSE)) log_trace("copied %ls\n", target);
+    else log_error("Could not copy '%ls' (error %lu).\n", target, GetLastError());
+}
+
 /* Every stem file in the folder, placed by its lead-in and peak-normalized to 1,
    written beside song.json when the stems instance closes. Stems already loaded
    are reused, so only a take that never reached a loop point is decoded again. */
@@ -4105,6 +4122,7 @@ static void write_mix(void)
             free(sums);
             free(block);
             log_trace("wrote %ls\n", path);
+            copy_mix(path);
         }
     }
 
