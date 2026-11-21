@@ -372,6 +372,7 @@ typedef struct {
 
 static MidiEventList midiEvents;
 static AEffect *vstEffect;
+static volatile LONG vstChanging, vstProcessedWhileChanging;
 
 #define VST_NAME 128
 #define VST_MAX_OCTAVE 6
@@ -2655,6 +2656,48 @@ static AEffect *create_effect(HMODULE library)
     return effect;
 }
 
+/* Milliseconds since the first plugin call of the run, so each entry in the log can
+   be lined up with what the plugin itself prints to the console. */
+static double vst_log_time(void)
+{
+    static LARGE_INTEGER start, frequency;
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (!start.QuadPart) {
+        QueryPerformanceFrequency(&frequency);
+        start = now;
+    }
+    return (double)(now.QuadPart - start.QuadPart) * 1000.0 / (double)frequency.QuadPart;
+}
+
+static const char *vst_opcode_name(int opcode)
+{
+    switch (opcode) {
+    case effOpen: return "open";
+    case effClose: return "close";
+    case effSetProgram: return "setProgram";
+    case effSetSampleRate: return "setSampleRate";
+    case effSetBlockSize: return "setBlockSize";
+    case effMainsChanged: return "mainsChanged";
+    case effProcessEvents: return "processEvents";
+    case effGetEffectName: return "getEffectName";
+    default: return "opcode";
+    }
+}
+
+/* Every plugin call made while a sound changes is logged either side of the call, so
+   the pair brackets anything the plugin prints while it runs. */
+static VstIntPtr vst_call(AEffect *effect, int opcode, int index, VstIntPtr value, void *ptr, float opt)
+{
+    unsigned long thread = GetCurrentThreadId();
+    log_trace("[%9.3f] thread %lu %p > %s %d %lld %g\n", vst_log_time(), thread, (void *)effect,
+              vst_opcode_name(opcode), index, (long long)value, opt);
+    VstIntPtr result = effect->dispatcher(effect, opcode, index, value, ptr, opt);
+    log_trace("[%9.3f] thread %lu %p < %s = %lld\n", vst_log_time(), thread, (void *)effect,
+              vst_opcode_name(opcode), (long long)result);
+    return result;
+}
+
 static void vst_free_buffers(void)
 {
     free(vstZeros);
@@ -2689,9 +2732,11 @@ static int vst_start(void)
 {
     if (!vstEffect) return 0;
 
-    vstEffect->dispatcher(vstEffect, effSetSampleRate, 0, 0, NULL, (float)g.rate);
-    vstEffect->dispatcher(vstEffect, effSetBlockSize, 0, g.bufferSize, NULL, 0);
-    vstEffect->dispatcher(vstEffect, effMainsChanged, 0, 1, NULL, 0);
+    log_trace("[%9.3f] starting plugin %p at %.0f Hz, %d frames, %d outputs\n", vst_log_time(),
+              (void *)vstEffect, g.rate, (int)g.bufferSize, vstOutputCount);
+    vst_call(vstEffect, effSetSampleRate, 0, 0, NULL, (float)g.rate);
+    vst_call(vstEffect, effSetBlockSize, 0, g.bufferSize, NULL, 0);
+    vst_call(vstEffect, effMainsChanged, 0, 1, NULL, 0);
     if (vst_allocate((int)g.bufferSize) != 0) {
         log_error("Out of memory for the VST buffers.\n");
         return -1;
@@ -2702,14 +2747,15 @@ static int vst_start(void)
 static void vst_stop(void)
 {
     if (!vstEffect) return;
-    vstEffect->dispatcher(vstEffect, effMainsChanged, 0, 0, NULL, 0);
+    log_trace("[%9.3f] stopping plugin %p\n", vst_log_time(), (void *)vstEffect);
+    vst_call(vstEffect, effMainsChanged, 0, 0, NULL, 0);
     vst_free_buffers();
 }
 
 static void effect_name(AEffect *effect, char *name, size_t size)
 {
     name[0] = 0;
-    effect->dispatcher(effect, effGetEffectName, 0, 0, name, 0);
+    vst_call(effect, effGetEffectName, 0, 0, name, 0);
     name[size - 1] = 0;
 }
 
@@ -2741,7 +2787,8 @@ static void send_vst_program_change(int program)
     memset(&events, 0, sizeof events);
     events.numEvents = 3;
     for (int i = 0; i < 3; i++) events.events[i] = (VstEvent *)&midi[i];
-    vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, &events, 0);
+    log_trace("[%9.3f] program change to %d (bank %d)\n", vst_log_time(), program, bank);
+    vst_call(vstEffect, effProcessEvents, 0, 0, &events, 0);
 }
 
 /* One instance per plugin is kept for the life of the program: a sound change
@@ -2752,17 +2799,20 @@ static int start_vst(int library, int program, int octave)
 {
     int fresh = vstInstances[library] == NULL;
     AEffect *effect = fresh ? create_effect(vstLibraries[library]) : vstInstances[library];
+    log_trace("[%9.3f] start_vst '%s' library %d, %s instance %p, requested preset %d, octave %+d\n",
+              vst_log_time(), vstNames[library], library, fresh ? "new" : "existing", (void *)effect,
+              program + 1, octave);
     if (!effect) return -1;
 
     if (fresh) {
         if (!effect->dispatcher || (!(effect->flags & effFlagsIsSynth) && effect->numInputs > 0) ||
             effect->numOutputs < 1 || effect->numOutputs > VST_MAX_OUTPUTS ||
             (!effect->processReplacing && !effect->process)) {
-            effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+            vst_call(effect, effClose, 0, 0, NULL, 0);
             return -1;
         }
 
-        effect->dispatcher(effect, effOpen, 0, 0, NULL, 0);
+        vst_call(effect, effOpen, 0, 0, NULL, 0);
         vstInstances[library] = effect;
     }
 
@@ -2783,15 +2833,18 @@ static int start_vst(int library, int program, int octave)
             vstOctave = slot % VST_OCTAVES - VST_MAX_OCTAVE;
         }
     }
+    log_trace("[%9.3f] plugin %p: %d presets, program %d, octave %+d, ASIO %s\n", vst_log_time(),
+              (void *)effect, vstPresetCount, vstProgram, vstOctave, g.started ? "running" : "stopped");
     if (vstPresetCount > 1)
-        effect->dispatcher(effect, effSetProgram, 0, vstProgram, NULL, 0);
+        vst_call(effect, effSetProgram, 0, vstProgram, NULL, 0);
 
     if (vst_start() != 0) {
+        log_trace("[%9.3f] plugin %p did not start\n", vst_log_time(), (void *)effect);
         vst_stop();
         vstEffect = NULL;
         vstActiveLibrary = -1;
         if (fresh) {
-            effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+            vst_call(effect, effClose, 0, 0, NULL, 0);
             vstInstances[library] = NULL;
         }
         return -1;
@@ -3049,7 +3102,7 @@ static void init_vst_taste(int library)
             VstStats *named = find_vst_stats(name, vstNames[library]);
             if (named && named->presets > 0) stats = named;
             vstLibraryPresets[library] = stats && stats->presets > 0 ? stats->presets : effect->numPrograms;
-            effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+            vst_call(effect, effClose, 0, 0, NULL, 0);
         }
     } else vstLibraryPresets[library] = stats->presets;
 
@@ -3290,6 +3343,7 @@ static void load_vsts(const char *folder)
 static void render_vst(float *dst, int outputs, int frames)
 {
     if (!vstEffect) return;
+    if (vstChanging) vstProcessedWhileChanging = 1;
 
     if (midiEvents.numEvents)
         vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, (VstEvents *)&midiEvents, 0);
@@ -3335,6 +3389,7 @@ static void render_instruments(float *dst, int outputs, int frames)
 
 static void suspend_vst_effect(void)
 {
+    if (vstEffect) log_trace("[%9.3f] suspending plugin %p\n", vst_log_time(), (void *)vstEffect);
     taste_flush();
     vst_stop();
     vstEffect = NULL;
@@ -3346,7 +3401,7 @@ static void close_vst_effect(void)
     suspend_vst_effect();
     for (int i = 0; i < VST_MAX_PLUGINS; i++) {
         if (!vstInstances[i]) continue;
-        vstInstances[i]->dispatcher(vstInstances[i], effClose, 0, 0, NULL, 0);
+        vst_call(vstInstances[i], effClose, 0, 0, NULL, 0);
         vstInstances[i] = NULL;
     }
 }
@@ -3390,8 +3445,10 @@ static int start_drawn_vst(void)
 
     for (int i = 0; i < count; i++)
         if (start_vst(order[i], order[i] == library ? program : -1,
-                      order[i] == library ? octave : 0) == 0)
+                      order[i] == library ? octave : 0) == 0) {
+            log_trace("[%9.3f] new sound uses '%s'\n", vst_log_time(), vstNames[order[i]]);
             return 0;
+        }
 
     log_error("None of the %d loaded plugins could be started.\n", vstLibraryCount);
     return -1;
@@ -3401,6 +3458,9 @@ static void new_vst_sound(void)
 {
     if (!vstLibraryCount) return;
 
+    log_trace("[%9.3f] new VST sound draw\n", vst_log_time());
+    vstProcessedWhileChanging = 0;
+    vstChanging = 1;
     if (g.started) {
         g.asio->vtable->stop(g.asio);
         g.started = 0;
@@ -3413,6 +3473,9 @@ static void new_vst_sound(void)
         log_error("ASIOStart failed after changing the VST.\n");
         InterlockedExchange(&g.quit, 1);
     } else g.started = 1;
+    vstChanging = 0;
+    if (vstProcessedWhileChanging)
+        log_trace("[%9.3f] plugin processed audio during the change\n", vst_log_time());
 }
 
 #define SOUND_MAX 1024
@@ -4006,6 +4069,23 @@ static float mix_sample(const MixStem *stem, drwav_uint64 frame, int output)
     return stem->samples[(size_t)(frame - stem->start) * stem->channels + (size_t)output % stem->channels];
 }
 
+/* The finished mix also lands in the works library, when that folder is there. */
+static void copy_mix(const wchar_t *path)
+{
+    static const wchar_t works[] = L"D:\\[Library]\\[Audio]\\[Works]";
+    DWORD attributes = GetFileAttributesW(works);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return;
+
+    const wchar_t *name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    wchar_t target[1200];
+    int written = swprintf(target, 1200, L"%ls\\%ls", works, name);
+    if (written < 0 || written >= 1200) return;
+
+    if (CopyFileW(path, target, FALSE)) log_trace("copied %ls\n", target);
+    else log_error("Could not copy '%ls' (error %lu).\n", target, GetLastError());
+}
+
 /* Every stem file in the folder, placed by its lead-in and peak-normalized to 1,
    written beside song.json when the stems instance closes. Stems already loaded
    are reused, so only a take that never reached a loop point is decoded again. */
@@ -4105,6 +4185,7 @@ static void write_mix(void)
             free(sums);
             free(block);
             log_trace("wrote %ls\n", path);
+            copy_mix(path);
         }
     }
 
@@ -4154,7 +4235,7 @@ static int find_vst_library(const char *name)
 
         char effectName[VST_NAME];
         effect_name(effect, effectName, sizeof effectName);
-        effect->dispatcher(effect, effClose, 0, 0, NULL, 0);
+        vst_call(effect, effClose, 0, 0, NULL, 0);
         if (effectName[0] && !_stricmp(effectName, name)) return i;
     }
     return -1;
@@ -4178,6 +4259,9 @@ static int restore_sound(int number)
     InterlockedExchange(&soundList->lock, 0);
     if (!found) return -1;
     name[SOUND_NAME - 1] = 0;
+
+    log_trace("[%9.3f] restore sound %d '%s' (ASIO %s, plugin %p)\n", vst_log_time(), number, name,
+              g.started ? "running" : "stopped", (void *)vstEffect);
 
     if (strstr(name, " drum samples")) {
         if (!drumCount) return -1;
@@ -4213,8 +4297,15 @@ static int restore_sound(int number)
     }
     if (preset < 1 || preset > vstLibraryPresets[library]) preset = 0;
 
+    log_trace("[%9.3f] restore plugin '%s' library %d, preset %d of %d, octave %+d, instance %p\n",
+              vst_log_time(), plugin, library, preset, vstLibraryPresets[library], octave,
+              (void *)vstInstances[library]);
+
+    vstProcessedWhileChanging = 0;
+    vstChanging = 1;
     int restart = g.started;
     if (restart) {
+        log_trace("[%9.3f] stopping ASIO for the change\n", vst_log_time());
         g.asio->vtable->stop(g.asio);
         g.started = 0;
     }
@@ -4228,12 +4319,17 @@ static int restore_sound(int number)
     }
 
     if (restart) {
-        if (g.asio->vtable->start(g.asio) == ASE_OK) g.started = 1;
-        else {
+        if (g.asio->vtable->start(g.asio) == ASE_OK) {
+            log_trace("[%9.3f] ASIO started again\n", vst_log_time());
+            g.started = 1;
+        } else {
             log_error("ASIOStart failed after restoring a sound.\n");
             InterlockedExchange(&g.quit, 1);
         }
     }
+    vstChanging = 0;
+    if (vstProcessedWhileChanging)
+        log_trace("[%9.3f] plugin processed audio during the change\n", vst_log_time());
     return g.soundNumber == number ? 0 : -1;
 }
 
@@ -4295,7 +4391,11 @@ static void print_sound(const char *prefix)
 
 static int take_sound(int number)
 {
-    if (restore_sound(number) != 0) return -1;
+    log_trace("[%9.3f] taking sound %d\n", vst_log_time(), number);
+    if (restore_sound(number) != 0) {
+        log_trace("[%9.3f] sound %d did not start\n", vst_log_time(), number);
+        return -1;
+    }
 
     print_sound("sound ");
     LARGE_INTEGER now;
@@ -4333,6 +4433,8 @@ static void new_sound(void)
 /* The console's clicks walk the shared sounds, and a click past the highest draws a new one. */
 static void step_sound(int step)
 {
+    log_trace("[%9.3f] step %+d from sound %d of %d\n", vst_log_time(), step, g.soundNumber,
+              soundList ? (int)soundList->count : 0);
     if (step > 0 && g.soundNumber >= 1 && g.soundNumber < (int)soundList->count) take_sound(g.soundNumber + 1);
     else if (step < 0 && g.soundNumber > 1) take_sound(g.soundNumber - 1);
     else if (step > 0) new_sound();
