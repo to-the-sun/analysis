@@ -1,9 +1,12 @@
 import ctypes
 import queue
 import sys
+import time
+import traceback
 from ctypes import wintypes
 
 DEVICE = "KeyRig 49"
+RETRY_SECONDS = 2
 MIM_DATA = 0x3C3
 CALLBACK_FUNCTION = 0x00030000
 
@@ -28,6 +31,15 @@ winmm.midiInStop.argtypes = [wintypes.HANDLE]
 winmm.midiInClose.argtypes = [wintypes.HANDLE]
 winmm.midiInGetErrorTextW.argtypes = [wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
 
+received = queue.Queue()
+status = None
+
+
+@MidiInProc
+def on_midi(handle, message, instance, param1, param2):
+    if message == MIM_DATA:
+        received.put(param1)
+
 
 def device_name(index):
     caps = MIDIINCAPSW()
@@ -43,19 +55,19 @@ def error_text(code):
     return text.value
 
 
-def main():
+def report(text):
+    global status
+    if text != status:
+        status = text
+        print(text, flush=True)
+
+
+def claim():
     names = [device_name(i) for i in range(winmm.midiInGetNumDevs())]
     index = next((i for i, name in enumerate(names) if (name or "").lower() == DEVICE.lower()), None)
     if index is None:
-        print(f"MIDI input '{DEVICE}' not found; available inputs: {', '.join(filter(None, names)) or 'none'}")
-        return 1
-
-    received = queue.Queue()
-
-    @MidiInProc
-    def on_midi(handle, message, instance, param1, param2):
-        if message == MIM_DATA:
-            received.put(param1)
+        report(f"MIDI input '{DEVICE}' not found; available inputs: {', '.join(filter(None, names)) or 'none'}")
+        return None
 
     handle = wintypes.HANDLE()
     result = winmm.midiInOpen(ctypes.byref(handle), index,
@@ -65,22 +77,43 @@ def main():
         if result != 0:
             winmm.midiInClose(handle)
     if result != 0:
-        print(f"MIDI input '{names[index]}' could not be claimed: {error_text(result)} (error {result})")
-        return 1
+        report(f"MIDI input '{names[index]}' could not be claimed: {error_text(result)} (error {result})")
+        return None
 
-    print(f"claimed MIDI input '{names[index]}'; press Ctrl+C to release it", flush=True)
+    report(f"claimed MIDI input '{names[index]}'; press Ctrl+C to release it")
+    return handle
+
+
+def listen(handle):
     try:
         while True:
             data = received.get()
             print(f"MIDI ch {(data & 0x0F) + 1}  {data & 0xFF:02X} "
                   f"{(data >> 8) & 0x7F:02X} {(data >> 16) & 0x7F:02X}", flush=True)
-    except KeyboardInterrupt:
-        pass
     finally:
         winmm.midiInStop(handle)
         winmm.midiInClose(handle)
-    return 0
+
+
+def main():
+    while True:
+        try:
+            handle = claim()
+            if handle:
+                listen(handle)
+                return 0
+        except KeyboardInterrupt:
+            return 0
+        except Exception:
+            print(traceback.format_exc(), end="", flush=True)
+        time.sleep(RETRY_SECONDS)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        pass
+    except BaseException:
+        traceback.print_exc()
+        input("press Enter to close")
