@@ -50,7 +50,7 @@ def device_name(index):
 
 def error_text(code):
     text = ctypes.create_unicode_buffer(256)
-    if winmm.midiInGetErrorTextW(code, text, ctypes.sizeof(text)) != 0:
+    if winmm.midiInGetErrorTextW(code, text, len(text)) != 0:
         return f"error {code}"
     return text.value
 
