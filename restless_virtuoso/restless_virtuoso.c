@@ -5269,8 +5269,10 @@ static void draw_meters(void)
         if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     }
 
-    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
-                       length ? "  " : "", rating_current(), ratingBurst);
+    int barMs = ratingBar;
+    if (barMs < 0) barMs = -barMs;
+    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f  bar %d ms",
+                       length ? "  " : "", rating_current(), ratingBurst, barMs);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));

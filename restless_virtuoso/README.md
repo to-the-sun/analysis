@@ -195,7 +195,8 @@ the rating does too. The console's last line shows it and replaces it as it chan
 beside a `score`: the average of the scores that arrived in the last 100 ms, from
 the instance's own side only — its stems when it plays a folder, its own audio when
 it has an analyzer of it. An arriving score redoes it; scores ageing out of the span
-leave it showing what it had.
+leave it showing what it had. Beside them is a `bar`, that instance's bar length in
+whole milliseconds.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
@@ -223,8 +224,8 @@ the last lead-in plus its stem, which the console's progress bar follows. A take
 nothing above the noise floor is not written.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
-`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position
-in the song over the song's length, in minutes and seconds.
+`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000  bar 512 ms`: the
+play position in the song over the song's length, in minutes and seconds.
 
 A WAV dropped into a folder that a stems instance is playing joins the others at the
 next loop point, aligned with them rather than at the top of the song, and the console
