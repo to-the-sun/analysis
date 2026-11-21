@@ -375,6 +375,7 @@ static AEffect *vstEffect;
 
 #define VST_NAME 128
 #define VST_MAX_OCTAVE 6
+#define VST_OCTAVES (2 * VST_MAX_OCTAVE + 1)
 
 typedef struct {
     char name[VST_NAME];
@@ -2569,9 +2570,14 @@ static int vstLibraryCount, vstActiveLibrary = -1, vstOutputCount, vstProgram, v
 static AEffect *vstInstances[VST_MAX_PLUGINS];
 static int vstLibraryPresets[VST_MAX_PLUGINS], vstLibraryLow[VST_MAX_PLUGINS], vstLibraryHigh[VST_MAX_PLUGINS];
 static int *vstTastes[VST_MAX_PLUGINS];
-static int vstTasted, vstTasteLibrary = -1, vstTasteProgram;
+static int vstTasted, vstTasteLibrary = -1, vstTasteProgram, vstTasteOctave;
 
 static void init_vst_taste(int library);
+
+static int taste_index(int program, int octave)
+{
+    return program * VST_OCTAVES + octave + VST_MAX_OCTAVE;
+}
 
 static void taste_flush(void)
 {
@@ -2579,7 +2585,7 @@ static void taste_flush(void)
         vstTasted = 0;
         if (vstTasteLibrary >= 0 && vstTastes[vstTasteLibrary] &&
             vstTasteProgram < vstLibraryPresets[vstTasteLibrary])
-            vstTastes[vstTasteLibrary][vstTasteProgram]++;
+            vstTastes[vstTasteLibrary][taste_index(vstTasteProgram, vstTasteOctave)]++;
     }
 
     if (!drumTasted) return;
@@ -2742,7 +2748,7 @@ static void send_vst_program_change(int program)
    activates an instance that is already open instead of destroying it and building
    it again, which some plugins report on the console and all of them pay for in load
    time. Only the active instance is processed. */
-static int start_vst(int library, int program)
+static int start_vst(int library, int program, int octave)
 {
     int fresh = vstInstances[library] == NULL;
     AEffect *effect = fresh ? create_effect(vstLibraries[library]) : vstInstances[library];
@@ -2767,11 +2773,16 @@ static int start_vst(int library, int program)
     vstPresetCount = vstLibraryPresets[library];
     vstRangeLow = vstLibraryLow[library];
     vstRangeHigh = vstLibraryHigh[library];
-    vstOctave = rand() % (2 * VST_MAX_OCTAVE + 1) - VST_MAX_OCTAVE;
     vstProgram = 0;
-    if (vstPresetCount > 0)
-        vstProgram = program >= 0 && program < vstPresetCount ? program
-                                                             : weighted_pick(vstTastes[library], vstPresetCount);
+    vstOctave = octave;
+    if (vstPresetCount > 0) {
+        if (program >= 0 && program < vstPresetCount) vstProgram = program;
+        else {
+            int slot = weighted_pick(vstTastes[library], vstPresetCount * VST_OCTAVES);
+            vstProgram = slot / VST_OCTAVES;
+            vstOctave = slot % VST_OCTAVES - VST_MAX_OCTAVE;
+        }
+    }
     if (vstPresetCount > 1)
         effect->dispatcher(effect, effSetProgram, 0, vstProgram, NULL, 0);
 
@@ -2854,7 +2865,7 @@ typedef struct {
 } TasteEntry;
 
 typedef struct {
-    int number, taste;
+    int number, octave, taste;
 } PresetEntry;
 
 typedef struct {
@@ -2957,15 +2968,16 @@ static void load_preset_tastes(const char *object)
         PresetEntry *entries = NULL;
         int count = 0, capacity = 0;
         for (;;) {
-            char number[16];
+            char key[24];
             at = skip_space(at);
             if (*at == '}') {
                 at++;
                 break;
             }
 
-            at = json_text(at, number, sizeof number);
-            if (!at) {
+            at = json_text(at, key, sizeof key);
+            int number = 0, octave = 0;
+            if (!at || sscanf(key, "%d/%d", &number, &octave) != 2) {
                 free(entries);
                 return;
             }
@@ -2992,7 +3004,8 @@ static void load_preset_tastes(const char *object)
                 entries = values;
                 capacity = grown;
             }
-            entries[count].number = atoi(number);
+            entries[count].number = number;
+            entries[count].octave = octave;
             entries[count++].taste = (int)taste;
 
             at = skip_space(end);
@@ -3055,18 +3068,22 @@ static void init_vst_taste(int library)
     int count = vstLibraryPresets[library];
     if (count <= 0) return;
 
-    int *taste = malloc((size_t)count * sizeof *taste);
+    int slots = count * VST_OCTAVES;
+    int *taste = malloc((size_t)slots * sizeof *taste);
     if (!taste) {
         vstLibraryPresets[library] = 0;
         return;
     }
-    for (int i = 0; i < count; i++) taste[i] = TASTE_START;
+    for (int i = 0; i < slots; i++) taste[i] = TASTE_START;
 
     for (int i = 0; i < filePresetCount; i++) {
         if (_stricmp(filePresets[i].name, vstNames[library])) continue;
         for (int j = 0; j < filePresets[i].count; j++) {
-            int number = filePresets[i].entries[j].number;
-            if (number >= 1 && number <= count) taste[number - 1] = filePresets[i].entries[j].taste;
+            PresetEntry *entry = &filePresets[i].entries[j];
+            if (entry->number < 1 || entry->number > count || entry->octave < -VST_MAX_OCTAVE ||
+                entry->octave > VST_MAX_OCTAVE)
+                continue;
+            taste[taste_index(entry->number - 1, entry->octave)] = entry->taste;
         }
         break;
     }
@@ -3111,7 +3128,8 @@ static void write_preset_entries(FILE *file, const PresetEntry *entries, int cou
 
     fprintf(file, "{ ");
     for (int i = 0; i < count; i++)
-        fprintf(file, "%s\"%d\": %d", i ? ", " : "", entries[i].number, entries[i].taste);
+        fprintf(file, "%s\"%d/%+d\": %d", i ? ", " : "", entries[i].number, entries[i].octave,
+                entries[i].taste);
     fprintf(file, " }");
 }
 
@@ -3134,8 +3152,9 @@ static int write_presets(FILE *file, int keep)
         fprintf(file, "%s\n      ", written++ ? "," : "");
         json_write_text(file, vstNames[i]);
         fprintf(file, ": { ");
-        for (int j = 0; j < count; j++)
-            fprintf(file, "%s\"%d\": %d", j ? ", " : "", j + 1, vstTastes[i][j]);
+        for (int j = 0; j < count * VST_OCTAVES; j++)
+            fprintf(file, "%s\"%d/%+d\": %d", j ? ", " : "", j / VST_OCTAVES + 1,
+                    j % VST_OCTAVES - VST_MAX_OCTAVE, vstTastes[i][j]);
         fprintf(file, " }");
     }
     return written;
@@ -3298,6 +3317,7 @@ static void render_vst(float *dst, int outputs, int frames)
         vstTasted = 1;
         vstTasteLibrary = vstActiveLibrary;
         vstTasteProgram = vstProgram;
+        vstTasteOctave = vstOctave;
     }
 }
 
@@ -3331,24 +3351,26 @@ static void close_vst_effect(void)
     }
 }
 
-/* One draw over every preset of every plugin, so a plugin's share of the lottery is
-   the sum of its presets' tickets and nothing depends on which plugin came up first. */
-static int pick_vst_preset(int *library, int *program)
+/* One draw over every preset of every plugin at every octave, so a plugin's share of
+   the lottery is the sum of its entries' tickets and nothing depends on which plugin
+   came up first. */
+static int pick_vst_sound(int *library, int *program, int *octave)
 {
     long long total = 0;
     for (int i = 0; i < vstLibraryCount; i++) {
         if (!vstTastes[i]) continue;
-        for (int j = 0; j < vstLibraryPresets[i]; j++) total += vstTastes[i][j];
+        for (int j = 0; j < vstLibraryPresets[i] * VST_OCTAVES; j++) total += vstTastes[i][j];
     }
     if (total <= 0) return -1;
 
     long long ticket = (long long)(random_unit() * (double)total);
     for (int i = 0; i < vstLibraryCount; i++) {
         if (!vstTastes[i]) continue;
-        for (int j = 0; j < vstLibraryPresets[i]; j++)
+        for (int j = 0; j < vstLibraryPresets[i] * VST_OCTAVES; j++)
             if ((ticket -= vstTastes[i][j]) < 0) {
                 *library = i;
-                *program = j;
+                *program = j / VST_OCTAVES;
+                *octave = j % VST_OCTAVES - VST_MAX_OCTAVE;
                 return 0;
             }
     }
@@ -3359,15 +3381,17 @@ static int start_drawn_vst(void)
 {
     if (!vstLibraryCount) return -1;
 
-    int library = -1, program = -1, order[VST_MAX_PLUGINS], count = 0;
+    int library = -1, program = -1, octave = 0, order[VST_MAX_PLUGINS], count = 0;
 
-    if (pick_vst_preset(&library, &program) == 0) order[count++] = library;
+    if (pick_vst_sound(&library, &program, &octave) == 0) order[count++] = library;
     for (int i = 0; i < vstLibraryCount; i++)
         if (i != library) order[count++] = i;
     shuffle(order + (library >= 0), count - (library >= 0));
 
     for (int i = 0; i < count; i++)
-        if (start_vst(order[i], order[i] == library ? program : -1) == 0) return 0;
+        if (start_vst(order[i], order[i] == library ? program : -1,
+                      order[i] == library ? octave : 0) == 0)
+            return 0;
 
     log_error("None of the %d loaded plugins could be started.\n", vstLibraryCount);
     return -1;
@@ -4179,6 +4203,8 @@ static int restore_sound(int number)
     if (field) sscanf(field, ", preset %d", &preset);
     field = strstr(name, ", octave ");
     if (field) sscanf(field, ", octave %d", &octave);
+    if (octave < -VST_MAX_OCTAVE) octave = -VST_MAX_OCTAVE;
+    else if (octave > VST_MAX_OCTAVE) octave = VST_MAX_OCTAVE;
 
     int library = find_vst_library(plugin);
     if (library < 0) {
@@ -4193,7 +4219,8 @@ static int restore_sound(int number)
         g.started = 0;
     }
     suspend_vst_effect();
-    if (start_vst(library, preset - 1) != 0) log_error("Could not start the plugin for the sound '%s'.\n", name);
+    if (start_vst(library, preset - 1, octave) != 0)
+        log_error("Could not start the plugin for the sound '%s'.\n", name);
     else {
         vstOctave = octave;
         g.samplesSound = 0;
