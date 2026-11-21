@@ -1610,12 +1610,13 @@ static DWORD WINAPI rating_worker(void *unused)
         int count = ratingScores.score_count - countBefore;
 
         /* The score is this instance's own side of the last 100 ms: its own audio when
-           it has an analyzer of it, otherwise the stems it is playing. */
+           it has an analyzer of it, otherwise the stems it is playing. A span with no
+           scores in it has nothing to average, so the score holds its last value. */
         if (!ratingOwn) {
             ownSum = sum;
             ownCount = count;
         }
-        ratingBurst = ownCount > 0 ? ownSum / ownCount : 0.0;
+        if (ownCount > 0) ratingBurst = ownSum / ownCount;
 
         if (ratingStepCount == RATING_STEPS) {
             ratingSum -= ratingSteps[ratingStepHead].sum;

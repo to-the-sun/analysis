@@ -193,7 +193,8 @@ and give the instance one rating: the average of the scores from the last 15 s o
 audio, rolling. In an instrument instance the group starts again with a new sound, so
 the rating does too. The console's last line shows it and replaces it as it changes,
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
-its stems when it plays a folder, its own audio when it has an analyzer of it.
+its stems when it plays a folder, its own audio when it has an analyzer of it. When
+that span holds no scores, the score keeps the last value it showed.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
