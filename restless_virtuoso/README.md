@@ -196,7 +196,8 @@ beside a `score`: the average of the scores that arrived in the last 100 ms, fro
 the instance's own side only — its stems when it plays a folder, its own audio when
 it has an analyzer of it. An arriving score redoes it; scores ageing out of the span
 leave it showing what it had. Beside them is a `bar`, that instance's bar length in
-whole milliseconds.
+whole milliseconds: a folder instance's comes from its stems and holds its last value
+across a loop point.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
@@ -206,9 +207,9 @@ milliseconds, `round(fabs(highest_peak_ms))`, and its bar points are multiples o
 from the loop's zero.
 It records from a bar point its jamming rating passes above the recitation rating while
 staying above it to the next, so a take holds at least one bar, is cut to the bars it
-held, and is written into that instance's `[stems]` folder. A bar length that changes
-releases the take if it has held a bar, and the next take starts at the next point of
-the new bar. Closing that instance drops the take in progress and its memory instead of writing it
+held, and is written into that instance's `[stems]` folder. A bar length that changes ends
+the take as any other release does, written if it held a bar at the length it started
+with, and the next take starts at the next point of the new bar. Closing that instance drops the take in progress and its memory instead of writing it
 as a project of its own, and the rating starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to

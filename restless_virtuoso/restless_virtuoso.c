@@ -1528,6 +1528,10 @@ static void rating_copy_step(RatingCopy *copy, double elapsed, ChunkAnalysisResu
     if (window < 0) window = 0;
     analyzer_analyze_chunk(copy->analyzer, copy->block, copy->step, copy->rate,
                            window / copy->hop, active / copy->hop, chunk);
+    /* A recitation's bar comes from its stems, and holds its last value rather than
+       blanking at a loop point. */
+    if (!ratingOwn && chunk->metrics.highest_peak_valid)
+        ratingBar = (int)round(fabs(chunk->metrics.highest_peak_ms));
     copy->pushed += copy->step;
 }
 
