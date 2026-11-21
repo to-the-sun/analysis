@@ -3935,13 +3935,14 @@ static void load_song_instruments(const char *array)
 /* A song keeps the scale it was played in, so every instrument of it plays that one. */
 static void load_song_scale(const char *object)
 {
-    char name[SCALE_NAME] = "", root[8] = "";
+    char name[SCALE_NAME] = "", key[8] = "";
     const char *value = json_value(object, "scale");
     if (!value || !json_text(value, name, sizeof name)) return;
-    value = json_value(object, "root");
-    if (!value || !json_text(value, root, sizeof root)) return;
+    value = json_value(object, "key");
+    if (!value) value = json_value(object, "root"); /* songs written before the rename */
+    if (!value || !json_text(value, key, sizeof key)) return;
 
-    int pitch = pitch_class(root);
+    int pitch = pitch_class(key);
     for (size_t i = 0; pitch >= 0 && i < sizeof scales / sizeof *scales; i++)
         if (!_stricmp(scales[i].name, name)) {
             publish_scale(scale_root_mask(scale_mask(scales[i].pitches), pitch), pitch, scales[i].name);
@@ -4044,7 +4045,7 @@ static void save_song(void)
         fwrite(skip_space(leads), 1, leadsLength, file);
     }
     if (cue && cue->scale_mask)
-        fprintf(file, ",\n  \"random_scale\": { \"scale\": \"%s\", \"root\": \"%s\" }",
+        fprintf(file, ",\n  \"random_scale\": { \"scale\": \"%s\", \"key\": \"%s\" }",
                 cue->scale_name, pitch_name((int)cue->scale_root));
     fputs("\n}\n", file);
 

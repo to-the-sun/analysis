@@ -159,8 +159,9 @@ Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
 instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
 seconds (`"3 16 drum samples.wav": 1.250000`), and a `"random_scale"` object such as
-`{ "scale": "Dorian", "root": "D" }` once a scale was playing during the song, which
+`{ "scale": "Dorian", "key": "D" }` once a scale was playing during the song, which
 every instance with `random_scale` set to 1 takes over when the song is started again.
+Songs written before the subkey was named `key` hold it as `"root"`, which is still read.
 Every running
 instance writes it when its sound changes and when it closes, so the order the
 instruments and the stems instance are closed in makes no difference, and an instrument
