@@ -198,9 +198,13 @@ its stems when it plays a folder, its own audio when it has an analyzer of it.
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
 all sharing a second group buffer with its own analyzer, so their scores together give
-it a separate jamming rating. It then records while the jamming rating is above the
-recitation rating, and its takes are written into that instance's `[stems]` folder.
-Closing that instance drops the take in progress and its memory instead of writing it
+it a separate jamming rating. Its bar is the distance to its own high point,
+`fabs(highest_peak_ms)`, and its bar points are multiples of that from the loop's zero.
+It records from a bar point its jamming rating passes above the recitation rating while
+staying above it to the next, so a take holds at least one bar, is cut to the bars it
+held, and is written into that instance's `[stems]` folder. A bar length that changes
+releases the take if it has held a bar, and the next take starts at the next point of
+the new bar. Closing that instance drops the take in progress and its memory instead of writing it
 as a project of its own, and the rating starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to

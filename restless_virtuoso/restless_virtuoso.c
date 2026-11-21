@@ -1310,7 +1310,7 @@ static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
-static volatile double ratingValue, ratingBurst;
+static volatile double ratingValue, ratingBurst, ratingBar;
 static struct { double sum; int count; } ratingSteps[RATING_STEPS];
 static int ratingStepHead, ratingStepCount;
 static double ratingSum;
@@ -1331,7 +1331,8 @@ typedef struct {
     unsigned rate;
     TakeChunk *first, *last;
     drwav_uint64 frames, offset;
-    int number, jamming;
+    int number, jamming, bars;
+    double point, bar;
     char sound[96];
 } Recording;
 
@@ -1404,6 +1405,7 @@ static void rating_drop(void)
     ratingScores.max_score_seen = -DBL_MAX;
     ratingValue = 0.0;
     ratingBurst = 0.0;
+    ratingBar = 0.0;
     ratingStepHead = ratingStepCount = ratingCount = 0;
     ratingSum = 0.0;
 
@@ -1594,6 +1596,7 @@ static DWORD WINAPI rating_worker(void *unused)
             int window = active - rate * (RATING_WINDOW_MS / 1000);
             if (window < 0) window = 0;
             analyzer_analyze_chunk(ratingOwn, block, step, rate, window / hop, active / hop, chunk);
+            ratingBar = chunk->metrics.highest_peak_valid ? fabs(chunk->metrics.highest_peak_ms) / 1000.0 : 0.0;
             pushed += step;
             ownSum = ratingScores.total_score_sum - sumBefore;
             ownCount = ratingScores.score_count - countBefore;
@@ -2072,16 +2075,25 @@ static void recording_stop(int spawn)
     TakeChunk *first = recording.first;
     drwav_uint64 frames = recording.frames, offset = recording.offset;
     unsigned rate = recording.rate;
-    int jamming = recording.jamming;
+    int jamming = recording.jamming, bars = recording.bars;
+    double bar = recording.bar;
     recording.first = recording.last = NULL;
     recording.frames = 0;
     recording.offset = 0;
+    recording.bars = 0;
     LeaveCriticalSection(&recordingLock);
 
     if (frames && rate) {
-        /* A take that jammed into a song is dropped with it, rather than written as a
-           project of its own, once that song's instance is gone. */
-        if (spawn && (!jamming || stems_instance(NULL, 0, NULL))) save_recording(first, frames, rate, offset);
+        /* A jamming take keeps only the whole bars it held. A take that jammed into a
+           song is dropped with it, rather than written as a project of its own, once
+           that song's instance is gone. */
+        int keep = !jamming;
+        if (jamming && bars) {
+            drwav_uint64 whole = (drwav_uint64)((double)bars * bar * (double)rate);
+            keep = 1;
+            if (whole < frames) frames = whole;
+        }
+        if (keep && spawn && (!jamming || stems_instance(NULL, 0, NULL))) save_recording(first, frames, rate, offset);
         else log_trace("discarded %llu recorded frames\n", (unsigned long long)frames);
     }
 
@@ -2111,8 +2123,53 @@ static void recording_start(void)
     recording.frames = 0;
     recording.offset = (drwav_uint64)(position * (double)g.rate);
     recording.jamming = jamming;
+    recording.bars = 0;
+    recording.bar = 0.0;
     recording.active = 1;
     LeaveCriticalSection(&recordingLock);
+}
+
+/* A jamming take is measured in bars of the instance's own high point. Its rating
+   must be above the recitation's as a bar point is passed and stay above it until the
+   next, which is the shortest take. A bar length that changes releases the take once
+   it holds a bar, and the next take starts at the next point of the new bar. */
+static void jamming_poll(double recitation)
+{
+    static double grid, point;   /* the bar length laid out, and the next point on it */
+
+    double length = ratingBar, now = rating_elapsed();
+    int above = rating_current() > recitation;
+
+    if (length <= 0.0 || now < 0.0) return;
+
+    if (length != grid) {
+        if (recording.active) recording_stop(1);
+        grid = length;
+        point = ceil(now / grid) * grid;
+        return;
+    }
+
+    if (!recording.active) {
+        if (now < point) return;
+        if (above) {
+            recording_start();
+            recording.point = point;
+            recording.bar = grid;
+        }
+        point = ceil(now / grid) * grid;
+        return;
+    }
+
+    if (!above) {
+        recording_stop(1);
+        point = ceil(now / grid) * grid;
+        return;
+    }
+
+    while (now >= recording.point + grid) {
+        recording.point += grid;
+        recording.bars++;
+    }
 }
 
 /* A stems instance records nothing: its group is the recitation. An instrument
@@ -2157,11 +2214,12 @@ static void rating_poll(void)
         return;
     }
 
-    int want;
-    if (ratingRequestedMode == RATING_JAMMING) want = rating_current() > recitation;
-    else want = rating_current() > 0.0 && !spawned_stems_alive();
+    if (ratingRequestedMode == RATING_JAMMING) {
+        jamming_poll(recitation);
+        return;
+    }
 
-    if (want) {
+    if (rating_current() > 0.0 && !spawned_stems_alive()) {
         if (!recording.active) recording_start();
     } else if (recording.active) recording_stop(1);
 }
