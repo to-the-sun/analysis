@@ -1310,7 +1310,8 @@ static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
-static volatile double ratingValue, ratingBurst, ratingBar;
+static volatile double ratingValue, ratingBurst;
+static volatile int ratingBar;
 static struct { double sum; int count; } ratingSteps[RATING_STEPS];
 static int ratingStepHead, ratingStepCount;
 static double ratingSum;
@@ -1332,7 +1333,7 @@ typedef struct {
     TakeChunk *first, *last;
     drwav_uint64 frames, offset;
     int number, jamming, bars;
-    double point, bar;
+    int point, bar;
     char sound[96];
 } Recording;
 
@@ -1405,7 +1406,7 @@ static void rating_drop(void)
     ratingScores.max_score_seen = -DBL_MAX;
     ratingValue = 0.0;
     ratingBurst = 0.0;
-    ratingBar = 0.0;
+    ratingBar = 0;
     ratingStepHead = ratingStepCount = ratingCount = 0;
     ratingSum = 0.0;
 
@@ -1596,7 +1597,7 @@ static DWORD WINAPI rating_worker(void *unused)
             int window = active - rate * (RATING_WINDOW_MS / 1000);
             if (window < 0) window = 0;
             analyzer_analyze_chunk(ratingOwn, block, step, rate, window / hop, active / hop, chunk);
-            ratingBar = chunk->metrics.highest_peak_valid ? fabs(chunk->metrics.highest_peak_ms) / 1000.0 : 0.0;
+            ratingBar = chunk->metrics.highest_peak_valid ? (int)round(fabs(chunk->metrics.highest_peak_ms)) : 0;
             pushed += step;
             ownSum = ratingScores.total_score_sum - sumBefore;
             ownCount = ratingScores.score_count - countBefore;
@@ -2076,7 +2077,7 @@ static void recording_stop(int spawn)
     drwav_uint64 frames = recording.frames, offset = recording.offset;
     unsigned rate = recording.rate;
     int jamming = recording.jamming, bars = recording.bars;
-    double bar = recording.bar;
+    int bar = recording.bar;
     recording.first = recording.last = NULL;
     recording.frames = 0;
     recording.offset = 0;
@@ -2089,7 +2090,7 @@ static void recording_stop(int spawn)
            that song's instance is gone. */
         int keep = !jamming;
         if (jamming && bars) {
-            drwav_uint64 whole = (drwav_uint64)((double)bars * bar * (double)rate);
+            drwav_uint64 whole = (drwav_uint64)((double)bars * (double)bar * (double)rate / 1000.0);
             keep = 1;
             if (whole < frames) frames = whole;
         }
@@ -2124,7 +2125,7 @@ static void recording_start(void)
     recording.offset = (drwav_uint64)(position * (double)g.rate);
     recording.jamming = jamming;
     recording.bars = 0;
-    recording.bar = 0.0;
+    recording.bar = 0;
     recording.active = 1;
     LeaveCriticalSection(&recordingLock);
 }
@@ -2135,17 +2136,18 @@ static void recording_start(void)
    it holds a bar, and the next take starts at the next point of the new bar. */
 static void jamming_poll(double recitation)
 {
-    static double grid, point;   /* the bar length laid out, and the next point on it */
+    static int grid, point;      /* the bar length in ms, and the next point on it */
 
-    double length = ratingBar, now = rating_elapsed();
+    int length = ratingBar;
+    double now = rating_elapsed() * 1000.0;
     int above = rating_current() > recitation;
 
-    if (length <= 0.0 || now < 0.0) return;
+    if (length <= 0 || now < 0.0) return;
 
     if (length != grid) {
         if (recording.active) recording_stop(1);
         grid = length;
-        point = ceil(now / grid) * grid;
+        point = (int)ceil(now / grid) * grid;
         return;
     }
 
@@ -2156,13 +2158,13 @@ static void jamming_poll(double recitation)
             recording.point = point;
             recording.bar = grid;
         }
-        point = ceil(now / grid) * grid;
+        point = (int)ceil(now / grid) * grid;
         return;
     }
 
     if (!above) {
         recording_stop(1);
-        point = ceil(now / grid) * grid;
+        point = (int)ceil(now / grid) * grid;
         return;
     }
 
