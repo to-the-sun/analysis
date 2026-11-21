@@ -3,7 +3,6 @@ import queue
 import sys
 import time
 import traceback
-from ctypes import wintypes
 
 DEVICE = "KeyRig 49"
 RETRY_SECONDS = 2
@@ -14,22 +13,22 @@ winmm = ctypes.WinDLL("winmm")
 
 
 class MIDIINCAPSW(ctypes.Structure):
-    _fields_ = [("wMid", wintypes.WORD), ("wPid", wintypes.WORD),
-                ("vDriverVersion", wintypes.UINT), ("szPname", wintypes.WCHAR * 32),
-                ("dwSupport", wintypes.DWORD)]
+    _fields_ = [("wMid", ctypes.c_ushort), ("wPid", ctypes.c_ushort),
+                ("vDriverVersion", ctypes.c_uint), ("szPname", ctypes.c_wchar * 32),
+                ("dwSupport", ctypes.c_uint)]
 
 
-MidiInProc = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.UINT,
-                                wintypes.DWORD_PTR, wintypes.DWORD_PTR, wintypes.DWORD_PTR)
+MidiInProc = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint,
+                                ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t)
 
-winmm.midiInGetNumDevs.restype = wintypes.UINT
-winmm.midiInGetDevCapsW.argtypes = [wintypes.UINT, ctypes.POINTER(MIDIINCAPSW), wintypes.UINT]
-winmm.midiInOpen.argtypes = [ctypes.POINTER(wintypes.HANDLE), wintypes.UINT,
-                             wintypes.DWORD_PTR, wintypes.DWORD_PTR, wintypes.DWORD]
-winmm.midiInStart.argtypes = [wintypes.HANDLE]
-winmm.midiInStop.argtypes = [wintypes.HANDLE]
-winmm.midiInClose.argtypes = [wintypes.HANDLE]
-winmm.midiInGetErrorTextW.argtypes = [wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+winmm.midiInGetNumDevs.restype = ctypes.c_uint
+winmm.midiInGetDevCapsW.argtypes = [ctypes.c_uint, ctypes.POINTER(MIDIINCAPSW), ctypes.c_uint]
+winmm.midiInOpen.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint,
+                             ctypes.c_size_t, ctypes.c_size_t, ctypes.c_uint]
+winmm.midiInStart.argtypes = [ctypes.c_void_p]
+winmm.midiInStop.argtypes = [ctypes.c_void_p]
+winmm.midiInClose.argtypes = [ctypes.c_void_p]
+winmm.midiInGetErrorTextW.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_wchar), ctypes.c_uint]
 
 received = queue.Queue()
 status = None
@@ -69,7 +68,7 @@ def claim():
         report(f"MIDI input '{DEVICE}' not found; available inputs: {', '.join(filter(None, names)) or 'none'}")
         return None
 
-    handle = wintypes.HANDLE()
+    handle = ctypes.c_void_p()
     result = winmm.midiInOpen(ctypes.byref(handle), index,
                               ctypes.cast(on_midi, ctypes.c_void_p).value, 0, CALLBACK_FUNCTION)
     if result == 0:
