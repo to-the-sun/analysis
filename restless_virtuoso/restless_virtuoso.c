@@ -1350,6 +1350,8 @@ static int ratingRequestMode, ratingRequestSound;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
 static wchar_t ratingRequestedFolder[1024];
+static int ratingBuiltMode = -1, ratingBuiltSound;
+static wchar_t ratingBuiltFolder[1024];
 
 typedef struct {
     volatile LONG active;
@@ -1408,7 +1410,7 @@ static int rating_take(float *out, int wanted)
     return taken;
 }
 
-static void rating_drop(void)
+static void rating_drop(int fresh)
 {
     for (int i = 0; i < ratingCopyCount; i++) {
         analyzer_destroy(ratingCopies[i].analyzer);
@@ -1429,10 +1431,12 @@ static void rating_drop(void)
     ratingScores.max_peak = 1.0;
     ratingScores.min_score_seen = DBL_MAX;
     ratingScores.max_score_seen = -DBL_MAX;
-    ratingValue = 0.0;
-    ratingBurst = 0.0;
-    ratingStepHead = ratingStepCount = ratingCount = 0;
-    ratingSum = 0.0;
+    if (fresh) {
+        ratingValue = 0.0;
+        ratingBurst = 0.0;
+        ratingStepHead = ratingStepCount = ratingCount = 0;
+        ratingSum = 0.0;
+    }
 
     EnterCriticalSection(&ratingLock);
     ratingCount = ratingHead = ratingTail = 0;
@@ -1517,7 +1521,14 @@ static int rating_load(const wchar_t *folder, int sound)
 
 static void rating_build(int mode, const wchar_t *folder, int sound)
 {
-    rating_drop();
+    /* A stem joining or dropping at a loop rebuilds the group, but the rating is an
+       average of scores over time, so only another source for them starts it again. */
+    int fresh = mode != ratingBuiltMode || sound != ratingBuiltSound || wcscmp(folder, ratingBuiltFolder);
+    ratingBuiltMode = mode;
+    ratingBuiltSound = sound;
+    wcsncpy(ratingBuiltFolder, folder, 1023);
+    ratingBuiltFolder[1023] = 0;
+    rating_drop(fresh);
 
     load_stem_leads();
 
@@ -1708,7 +1719,7 @@ static void rating_stop(void)
         ratingWake = NULL;
     }
     if (ratingStarted) {
-        rating_drop();
+        rating_drop(1);
         ratingStarted = 0;
     }
     free(ratingFeed);
