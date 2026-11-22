@@ -2251,7 +2251,8 @@ static void advance_tracks(void)
         if (track->position < track->frames) finished = 0;
     }
 
-    if (!finished) return;
+    /* The loop ends at the length the bar shows, which a lead change mid-loop can shorten. */
+    if (!finished && playlistElapsed < playlist_length()) return;
     for (int i = 0; i < stemCount; i++) {
         stems[i].position = 0;
         stems[i].fraction = 0;
