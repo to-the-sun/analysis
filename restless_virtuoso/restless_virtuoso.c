@@ -4729,8 +4729,31 @@ static BOOL WINAPI ctrl_handler(DWORD type)
     return TRUE;
 }
 
+/* Raw input reaches this window whichever window has the focus, without taking the key
+   from it, so a Tab or a 1 still reaches whatever is being typed into. */
+static void read_raw_key(LPARAM lparam)
+{
+    RAWINPUT input;
+    UINT size = sizeof input;
+    static int heldTab, held1;
+
+    if (GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &input, &size, sizeof input.header) != size ||
+        input.header.dwType != RIM_TYPEKEYBOARD) return;
+
+    RAWKEYBOARD *key = &input.data.keyboard;
+    int *held = key->VKey == VK_TAB ? &heldTab : key->VKey == '1' ? &held1 : NULL;
+    if (!held) return;
+
+    if (key->Message == WM_KEYUP || key->Message == WM_SYSKEYUP) *held = 0;
+    else if (!*held) {
+        *held = 1;
+        if (instrumentMode) step_sound(key->VKey == VK_TAB ? 1 : -1);
+    }
+}
+
 static LRESULT CALLBACK wnd_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (message == WM_INPUT) read_raw_key(lparam);
     return DefWindowProcA(window, message, wparam, lparam);
 }
 
@@ -5605,6 +5628,8 @@ static int run(int argc, char **argv, const wchar_t *folder)
         return 1;
     }
     log_trace("window %p\n", (void *)window);
+    RAWINPUTDEVICE keyboard = {0x01, 0x06, RIDEV_INPUTSINK, window};
+    if (instrumentMode) RegisterRawInputDevices(&keyboard, 1, sizeof keyboard);
 
     HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(com) && com != RPC_E_CHANGED_MODE) {
