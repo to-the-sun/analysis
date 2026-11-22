@@ -919,6 +919,7 @@ typedef struct {
     wchar_t stems[1024];
     volatile LONG stems_count;
     volatile LONG generation;
+    volatile LONG closing, recording;
     volatile double length;
     volatile double rating;
     volatile LONG scale_seq, scale_mask, scale_root;
@@ -1004,6 +1005,8 @@ static void publish_palette(const wchar_t *stems)
     wcscpy(cue->folder + folder, L"[palettes]\\");
     cue->stems_count = stemCount;
     cue->generation = 0;
+    cue->closing = 0;
+    cue->recording = 0;
     cue->length = playlist_length();
     cue->rating = 0.0;
     cue->qpc = 0;
@@ -1106,6 +1109,8 @@ static void clear_loop_cue(void)
     cue->rating = 0.0;
     cue->stems_count = 0;
     cue->generation = 0;
+    cue->closing = 0;
+    cue->recording = 0;
     cue->length = 0.0;
     cue->folder[0] = 0;
     cue->stems[0] = 0;
@@ -2113,6 +2118,8 @@ static void recording_stop(int spawn)
         else log_trace("discarded %llu recorded frames\n", (unsigned long long)frames);
     }
 
+    if (jamming && cue) InterlockedDecrement(&cue->recording);
+
     for (TakeChunk *chunk = first; chunk;) {
         TakeChunk *next = chunk->next;
         free(chunk->samples);
@@ -2140,6 +2147,7 @@ static void recording_start(void)
     recording.offset = (drwav_uint64)(position * (double)g.rate);
     recording.jamming = jamming;
     recording.active = 1;
+    if (jamming && cue) InterlockedIncrement(&cue->recording);
     LeaveCriticalSection(&recordingLock);
 }
 
@@ -2182,6 +2190,11 @@ static void rating_poll(void)
 
     if (playlistMode) {
         if (cue && cue->pid == GetCurrentProcessId()) cue->rating = rating_current();
+        return;
+    }
+
+    if (shared && cue->closing) {
+        if (recording.active) recording_stop(1);
         return;
     }
 
@@ -5233,6 +5246,17 @@ static void draw_meters(void)
     fflush(stdout);
 }
 
+/* An instrument jamming into this group is asked to stop and write its take while
+   the cue still names the folder, so closing the group does not discard it. */
+static void finish_takes(void)
+{
+    if (!cue || cue->pid != GetCurrentProcessId()) return;
+
+    cue->closing = 1;
+    for (int i = 0; i < 5000 && cue->recording > 0; i++) Sleep(1);
+    cue->closing = 0;
+}
+
 static void shutdown_monitor(void)
 {
     if (g.midiIn) {
@@ -5252,6 +5276,7 @@ static void shutdown_monitor(void)
     }
     if (settingsPath) save_settings(settingsPath, settingsOptions);
     if (playlistMode) {
+        finish_takes();
         save_song();
         write_mix();
     }
