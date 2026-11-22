@@ -109,7 +109,6 @@ summing to the old loop length and put the fourth stab back on the grid. At
 0.66 s late, it does not; the third strike is simply where the stretch becomes
 audible. The row therefore draws that as one uniform 1.58 s loop, within 0.09 s of each
 measured gap.
-6. **Starts are measured, not shared.** Nothing is snapped to a common grid for its own sake; the rows agree
-because the audio puts them on the same pulse.
+6. **Starts are arbitrary and only need to encompass the element they track.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked element is not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
