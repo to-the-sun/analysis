@@ -559,6 +559,8 @@ static void load_stem_leads(void);
 static double stem_lead(const wchar_t *file);
 static void set_stem_lead(const wchar_t *file, double lead);
 static void save_stem_leads(void);
+static double playlist_length(void);
+static void log_playlist(const char *event, double position);
 static int sound_mode(int number);
 static int stem_sound_collides(const wchar_t *file, int sound);
 static int stem_muted(const wchar_t *file);
@@ -850,6 +852,24 @@ static int decode_track(Track *track, const wchar_t *path)
     return 0;
 }
 
+/* The bar's position is a free count while its total is recomputed from the stems each
+   draw, so a loop that outlives the total names the stem still playing past the end. */
+static void log_playlist(const char *event, double position)
+{
+    log_trace("%s: %.3fs of %.3fs, %d stems\n", event, position, playlist_length(), stemCount);
+
+    for (int i = 0; i < stemCount; i++) {
+        const Track *track = &stems[i];
+        double lead = stemFiles[i] ? stem_lead(stemFiles[i]) : 0.0;
+        double seconds = track->rate ? (double)track->frames / (double)track->rate : 0.0;
+        log_trace("  %ls: lead %.3fs, %.3fs long, ends %.3fs, wait %.3fs, at %.3fs%s\n",
+                  stemFiles[i] ? stemFiles[i] : L"(gone)", lead, seconds, lead + seconds,
+                  track->rate ? track->wait / (double)track->rate : 0.0,
+                  track->rate ? (double)track->position / (double)track->rate : 0.0,
+                  track->muted ? ", muted" : "");
+    }
+}
+
 static int start_playlist_w(const wchar_t *folder)
 {
     wchar_t *path = long_path(folder);
@@ -882,6 +902,7 @@ static int start_playlist_w(const wchar_t *folder)
         log_error("Every audio file in the folder failed to decode.\n");
         return -1;
     }
+    log_playlist("playlist loaded", 0.0);
     return 0;
 }
 
@@ -971,8 +992,6 @@ static void open_cue(void)
     cue = cueMapping ? MapViewOfFile(cueMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LoopCue)) : NULL;
     if (cue) take.seen = InterlockedCompareExchange(&cue->seq, 0, 0);
 }
-
-static double playlist_length(void);
 
 static void send_loop_start(void)
 {
@@ -1331,6 +1350,8 @@ static int ratingRequestMode, ratingRequestSound;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
 static wchar_t ratingRequestedFolder[1024];
+static int ratingBuiltMode = -1, ratingBuiltSound;
+static wchar_t ratingBuiltFolder[1024];
 
 typedef struct {
     volatile LONG active;
@@ -1389,7 +1410,7 @@ static int rating_take(float *out, int wanted)
     return taken;
 }
 
-static void rating_drop(void)
+static void rating_drop(int fresh)
 {
     for (int i = 0; i < ratingCopyCount; i++) {
         analyzer_destroy(ratingCopies[i].analyzer);
@@ -1410,10 +1431,12 @@ static void rating_drop(void)
     ratingScores.max_peak = 1.0;
     ratingScores.min_score_seen = DBL_MAX;
     ratingScores.max_score_seen = -DBL_MAX;
-    ratingValue = 0.0;
-    ratingBurst = 0.0;
-    ratingStepHead = ratingStepCount = ratingCount = 0;
-    ratingSum = 0.0;
+    if (fresh) {
+        ratingValue = 0.0;
+        ratingBurst = 0.0;
+        ratingStepHead = ratingStepCount = ratingCount = 0;
+        ratingSum = 0.0;
+    }
 
     EnterCriticalSection(&ratingLock);
     ratingCount = ratingHead = ratingTail = 0;
@@ -1498,7 +1521,14 @@ static int rating_load(const wchar_t *folder, int sound)
 
 static void rating_build(int mode, const wchar_t *folder, int sound)
 {
-    rating_drop();
+    /* A stem joining or dropping at a loop rebuilds the group, but the rating is an
+       average of scores over time, so only another source for them starts it again. */
+    int fresh = mode != ratingBuiltMode || sound != ratingBuiltSound || wcscmp(folder, ratingBuiltFolder);
+    ratingBuiltMode = mode;
+    ratingBuiltSound = sound;
+    wcsncpy(ratingBuiltFolder, folder, 1023);
+    ratingBuiltFolder[1023] = 0;
+    rating_drop(fresh);
 
     load_stem_leads();
 
@@ -1689,7 +1719,7 @@ static void rating_stop(void)
         ratingWake = NULL;
     }
     if (ratingStarted) {
-        rating_drop();
+        rating_drop(1);
         ratingStarted = 0;
     }
     free(ratingFeed);
@@ -2208,6 +2238,8 @@ static void rating_poll(void)
 }
 
 static double playlistElapsed;
+static double loopElapsed;               /* the position the last loop reset from */
+static volatile LONG loopReported;
 
 static void advance_tracks(void)
 {
@@ -2230,14 +2262,17 @@ static void advance_tracks(void)
         if (track->position < track->frames) finished = 0;
     }
 
-    if (!finished) return;
+    /* The loop ends at the length the bar shows, which a lead change mid-loop can shorten. */
+    if (!finished && playlistElapsed < playlist_length()) return;
     for (int i = 0; i < stemCount; i++) {
         stems[i].position = 0;
         stems[i].fraction = 0;
     }
+    loopElapsed = playlistElapsed;
     playlistElapsed = 0.0;
     send_loop_start();
     InterlockedExchange(&playlistRefresh, 1);
+    InterlockedExchange(&loopReported, 1);
     InterlockedExchange(&ratingLoop, 1);
 }
 
@@ -2284,6 +2319,8 @@ static void refresh_playlist(void)
     double position = playlistElapsed;
     int changed = 0;
 
+    if (position > 0.1) log_trace("refreshing the playlist %.3fs into the loop\n", position);
+
     load_stem_leads();
     for (int i = 0; i < stemCount; i++) {
         if (!stemFiles[i] || !stems[i].frames) continue;
@@ -2306,7 +2343,8 @@ static void refresh_playlist(void)
         WideCharToMultiByte(CP_ACP, 0, base ? base + 1 : stemFiles[i], -1, name, sizeof name, NULL, NULL);
         snprintf(line, sizeof line, "  dropped %s, %d stems playing", name, playlist_stems());
         console_line(line);
-        log_trace("dropped %ls\n", stemFiles[i]);
+        log_trace("dropped %ls at %.3fs, written %llu of %llu\n", stemFiles[i], playlistElapsed,
+                  (unsigned long long)written, (unsigned long long)stemWritten[i]);
         stemFiles[i] = NULL;
         changed = 1;
     }
@@ -2357,7 +2395,8 @@ static void refresh_playlist(void)
         WideCharToMultiByte(CP_ACP, 0, entry.cFileName, -1, name, sizeof name, NULL, NULL);
         snprintf(line, sizeof line, "  joined %s, %d stems playing", name, playlist_stems());
         console_line(line);
-        log_trace("joined %ls\n", file);
+        log_trace("joined %ls at %.3fs, lead %.3fs, %.3fs long\n", file, position, stem_lead(file),
+                  track->rate ? (double)track->frames / (double)track->rate : 0.0);
     } while (FindNextFileW(find, &entry));
     FindClose(find);
 
@@ -5218,6 +5257,13 @@ static void draw_meters(void)
 
     if (playlistMode) {
         double position = playlistElapsed, total = playlist_length();
+        static int overrun;
+
+        if (position > total + 0.05) {
+            if (!overrun) log_playlist("past the song's length", position);
+            overrun = 1;
+        } else overrun = 0;
+
         int filled = total > 0.0 ? (int)(position / total * 24.0) : 0;
         if (filled > 24) filled = 24;
 
@@ -5711,6 +5757,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
             if (g.asio->vtable->start(g.asio) == ASE_OK) g.started = 1;
             lastDraw = 0;
         }
+        if (playlistMode && InterlockedExchange(&loopReported, 0)) log_playlist("loop ended", loopElapsed);
         if (playlistMode && InterlockedExchange(&playlistRefresh, 0)) {
             if (g.started) {
                 g.asio->vtable->stop(g.asio);
