@@ -180,7 +180,8 @@ as well, when that folder exists.
 
 In instrument mode, left-click anywhere in the console to move up to the next shared
 sound, or to draw a new one when it is already on the highest, and right-click to move
-back down to sound 1. A new sound comes from `samples_path` or `vsts_path` by
+back down to sound 1. Tab and 1 do the same as left and right click, whichever window has
+the focus. A new sound comes from `samples_path` or `vsts_path` by
 `samples_ratio`.
 
 ## Rating and stems instances

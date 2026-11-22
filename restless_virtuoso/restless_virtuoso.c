@@ -4729,6 +4729,28 @@ static BOOL WINAPI ctrl_handler(DWORD type)
     return TRUE;
 }
 
+static HHOOK keyHook;
+static int pendingStep;
+
+/* A hook sees the keys a keyboard presses and the ones another program sends, which raw
+   input never reports, and leaves the key to reach whatever window has the focus. */
+static LRESULT CALLBACK key_proc(int code, WPARAM wparam, LPARAM lparam)
+{
+    static int heldTab, held1;
+
+    if (code == HC_ACTION) {
+        const KBDLLHOOKSTRUCT *key = (const KBDLLHOOKSTRUCT *)lparam;
+        int *held = key->vkCode == VK_TAB ? &heldTab : key->vkCode == '1' ? &held1 : NULL;
+
+        if (held && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP)) *held = 0;
+        else if (held && !*held) {
+            *held = 1;
+            pendingStep = key->vkCode == VK_TAB ? 1 : -1;
+        }
+    }
+    return CallNextHookEx(NULL, code, wparam, lparam);
+}
+
 static LRESULT CALLBACK wnd_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     return DefWindowProcA(window, message, wparam, lparam);
@@ -5305,6 +5327,10 @@ static void finish_takes(void)
 
 static void shutdown_monitor(void)
 {
+    if (keyHook) {
+        UnhookWindowsHookEx(keyHook);
+        keyHook = NULL;
+    }
     if (g.midiIn) {
         midiInStop(g.midiIn);
         midiInClose(g.midiIn);
@@ -5605,6 +5631,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         return 1;
     }
     log_trace("window %p\n", (void *)window);
+    if (instrumentMode) keyHook = SetWindowsHookExA(WH_KEYBOARD_LL, key_proc, GetModuleHandleA(NULL), 0);
 
     HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(com) && com != RPC_E_CHANGED_MODE) {
@@ -5724,6 +5751,10 @@ static int run(int argc, char **argv, const wchar_t *folder)
     ULONGLONG lastDraw = 0;
     while (!g.quit) {
         pump_messages();
+
+        int step = pendingStep;
+        pendingStep = 0;
+        if (step) step_sound(step);
 
         if (InterlockedExchange(&g.reset, 0)) {
             log_line("driver settings changed, reconfiguring");
