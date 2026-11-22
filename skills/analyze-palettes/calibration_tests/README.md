@@ -25,7 +25,8 @@ Each test phrase below will have a key with the "correct" stats that should be d
 - The gray trace is the same waveform drawn once per pattern, so every pattern
   has its own row against the shared time axis. The waveform is a single mono recording; every row comes from the same audio and nothing here is a stack of separate stems.
 - The **outer rectangle** is the whole pattern: from its measured start to
-  the end of its last complete segment.
+  the end of its last complete segment. Its start sits part of a loop before the
+  first tracked onset, so no attack is split by a segment edge.
 - The **dashed verticals** divide the row into segments, one per loop
   iteration, at the pattern's loop length.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
@@ -67,11 +68,11 @@ Each test phrase below will have a key with the "correct" stats that should be d
 
 | Tracked element | Segment length (s) | Segments | Region (s) |
 |---|---:|---:|---|
-| D4 | 1.34 | 4, 4, 4 | 0.73–6.09, 11.54–16.90, 22.14–27.50 |
-| D4 | 1.58 | 4 | 33.11–39.43 |
-| E4 | 1.34 | 4, 4 | 6.13–11.49, 16.86–22.22 |
-| G/D3 | 1.34 | 4 | 27.82–33.18 |
-| F#3 | 1.34 | 16 | 0.73–22.17 |
+| D4 | 1.34 | 4, 4, 4 | 0.40–5.76, 11.21–16.57, 21.81–27.17 |
+| D4 | 1.58 | 4 | 32.78–39.10 |
+| E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
+| G/D3 | 1.34 | 4 | 27.35–32.71 |
+| F#3 | 1.34 | 16 | 0.40–21.84 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
