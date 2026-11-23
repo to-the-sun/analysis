@@ -32,8 +32,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
   iteration, at the pattern's loop length.
 - The **red rectangle** in the top row is a superpattern: that row's repeating
   block is itself one pattern, so the rectangle marks how far the repetition
-  runs. It has no row of its own: its segments are the smaller patterns in the
-  rows below it, drawn inside it, so their own boxes mark its divisions.
+  runs. It has no row of its own; each of its segments holds one of the smaller
+  patterns below it plus the untracked space after it, so its own dashed
+  divisions fall in those spaces between them.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
@@ -78,7 +79,7 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
 | G/D3 | 1.34 | 4 | 27.35–32.71 |
 | F#3 | 1.34 | 16 | 0.40–21.84 |
-| four-strike block (superpattern) | 5.38 | 6 | 0.40–32.71 |
+| four-strike block (superpattern) | 5.39 | 3 | 0.40–16.57 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
@@ -119,13 +120,12 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
-8. **The six four-strike blocks are themselves one pattern.** Each is the same
-shape at the same scale: four strikes of one chord on the 1.34 s grid, then a
-short gap, 5.4 s in all, running back to back from 0.40 s to 32.71 s. That makes
-the sequence a superpattern one level up, whose segments are those six patterns
-taken whole rather than re-measured and whose loop is one block rather than one
-strike. Six segments clear the minimum of three at that period, while the D4/E4
-pair repeats only twice and is not a second pattern. The switch to G/D3 keeps
-the block's shape and grid and its pitch already has a pattern of its own, so it
-completes the run; the closing D4 strikes stretch the block to 6.32 s, which
-ends the superpattern at its last complete block.
+8. **The four-strike blocks are themselves one pattern.** Each is the same shape
+at the same scale: four strikes of one chord on the 1.34 s grid, then a short
+gap, 5.4 s in all. Three of them, the minimum a pattern needs, run back to back
+from 0.40 s, giving a superpattern one level up with a 5.39 s loop and segments
+of 0.40–5.79, 5.79–11.18 and 11.18–16.57 s. A segment holds one whole block
+plus the untracked space after it, just as a normal segment holds one tracked
+element plus the space around it, so the loop is one block and not one strike,
+and the 1.34 s grid stays inside the segments as their content. Nothing is
+re-measured: the segments are the smaller patterns taken whole.

@@ -38,9 +38,9 @@ ROWS = {
 RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
          "test_audio_2": (473, 715, 957, 1199, 1439.5)}
 
-# name, color, row band top/bottom (px), start, loop, segments
+# color, row band top/bottom (px), start, loop, segments
 SUPERS = {
-    "test_audio_2": [("superpattern", "#f12a1e", (TOP, 472), 0.40, 5.385, 6)],
+    "test_audio_2": [("#f12a1e", (TOP, 472), 0.40, 5.39, 3)],
 }
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
@@ -140,11 +140,12 @@ def main(name):
         fig.text(x_px / W, 1 - y_px / H, s, fontsize=size, color=color,
                  fontweight=weight, ha=ha, va="baseline")
 
-    for label, color, (top, bottom), start, loop, count in SUPERS.get(name, []):
+    for color, (top, bottom), start, loop, count in SUPERS.get(name, []):
         ax.add_patch(Rectangle((start, y(bottom)), loop * count, y(top) - y(bottom),
-                               fill=False, edgecolor=color, lw=1.3, zorder=6))
-        text(LEFT + start / span * (RIGHT - LEFT) + 8, 212,
-             f"{label} · {loop:.2f} s × {count}", 8.4, color, "bold")
+                               fill=False, edgecolor=color, lw=3.15, alpha=0.5, zorder=6))
+        for j in range(1, count):
+            ax.plot([start + j * loop] * 2, [y(bottom), y(top)],
+                    color=color, lw=1.05, dashes=(2.0, 2.0), zorder=6)
 
     text(51, 89, wav.name, 15.5, "#ffffff", "bold")
     text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono", 8.8, MUTED)
