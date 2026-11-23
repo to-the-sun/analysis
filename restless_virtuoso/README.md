@@ -218,7 +218,8 @@ is a lead-in per stem in `song.json`, not silence in the file: a stem with a lea
 cued that far into each loop, a take that mostly lies past a loop point carries a
 lead-in of zero and moves the others' lead-ins back with it, and the song's length is
 the last lead-in plus its stem, which the console's progress bar follows. A take with
-nothing above the noise floor is not written.
+nothing above the noise floor is not written, and one shorter than the bar its
+instance sees is dropped first.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
 `[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position

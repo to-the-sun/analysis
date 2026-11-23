@@ -1335,7 +1335,7 @@ static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
 static volatile LONG ratingQuit;
-static volatile double ratingValue, ratingBurst;
+static volatile double ratingValue, ratingBurst, ratingBar;
 static struct { double sum; int count; } ratingSteps[RATING_STEPS];
 static int ratingStepHead, ratingStepCount;
 static double ratingSum;
@@ -1646,6 +1646,7 @@ static DWORD WINAPI rating_worker(void *unused)
             ownCount = ratingScores.score_count - countBefore;
         }
         for (int i = 0; i < ratingCopyCount; i++) rating_copy_step(&ratingCopies[i], elapsed, chunk);
+        if (ratingOwn || ratingCopyCount) ratingBar = chunk->metrics.highest_peak_valid ? fabs(chunk->metrics.highest_peak_ms) : 0.0;
 
         double sum = ratingScores.total_score_sum - sumBefore;
         int count = ratingScores.score_count - countBefore;
@@ -2048,6 +2049,11 @@ static void prune_stems(const wchar_t *folder, const wchar_t *path, double begin
 
 static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate, drwav_uint64 offset)
 {
+    if ((double)frames * 1000.0 / (double)rate < ratingBar) {
+        log_trace("take was shorter than the bar; not written\n");
+        return;
+    }
+
     wchar_t stems[1024], folder[1200], path[1400], base[160];
     int shared = stems_instance(stems, 1024, NULL);
 
