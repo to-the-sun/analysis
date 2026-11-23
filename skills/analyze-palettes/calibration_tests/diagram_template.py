@@ -33,10 +33,17 @@ ROWS = {
         ("G/D3", "#3ad07d", (958, 1198), (27.35,), 1.340, [(0, 4)]),
         ("F#3", "#2f9bff", (1200, 1439), (0.40,), 1.340, [(0, 16)]),
     ],
+    # two phrases: the riff and the pad never overlap by a full segment, so
+    # each row's grid stands alone
+    "test_audio_3": [
+        ("bass riff", "#f12a1e", (232, 835), 0.19, 3.012, [(0, 5)]),
+        ("F#2 drone", "#f1ad03", (837, 1439), 15.65, 9.000, [(0, 5)]),
+    ],
 }
 
 RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
-         "test_audio_2": (473, 715, 957, 1199, 1439.5)}
+         "test_audio_2": (473, 715, 957, 1199, 1439.5),
+         "test_audio_3": (836, 1439.5)}
 
 # color, box path top/bottom (px), start, end, segment boundaries (s)
 SUPERS = {
@@ -53,9 +60,11 @@ WAVES = {
         (1139, 1439, 0.514, 1.143, "top"),
     ],
     "test_audio_2": [(232, 1439, 0.12, 0.52, "center")],
+    "test_audio_3": [(232, 835, 0.02, 0.42, "bottom"),
+                     (837, 1439, 0.02, 0.42, "top")],
 }
 
-TRACE = {"test_audio_1": "peak", "test_audio_2": "rms"}
+TRACE = {"test_audio_1": "peak", "test_audio_2": "rms", "test_audio_3": "peak"}
 PAD = 2  # px between a pattern box and its row edges
 
 
