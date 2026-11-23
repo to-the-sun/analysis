@@ -71,11 +71,11 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | Tracked element | Segment length (s) | Segments | Region (s) |
 |---|---:|---:|---|
 | D4 | 1.34 | 4, 4, 4 | 0.40–5.76, 11.21–16.57, 21.81–27.17 |
+| D4 superpattern | 10.77 | 3 | 0.40–32.71 |
 | D4 | 1.58 | 4 | 32.78–39.10 |
 | E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
 | G/D3 | 1.34 | 4 | 27.35–32.71 |
 | F#3 | 1.34 | 16 | 0.40–21.84 |
-| two four-strike blocks (superpattern) | 10.77 | 3 | 0.40–32.71 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
