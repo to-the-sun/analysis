@@ -128,7 +128,7 @@ measured gap.
 | G#1 | 3.01 | 5 | 0.19–15.25 |
 | C#2 | 3.01 | 5 | 0.19–15.25 |
 | A#1 | 3.01 | 5 | 0.19–15.25 |
-| F#2 | 3.00 | 15 | 15.65–60.65 |
+| F#2 | 3.18 | 16 | 15.43–66.31 |
 
 ## Discussion
 
@@ -154,15 +154,18 @@ measured gap.
    segment" already covers; an onset is not a precondition. Where there is no attack, match the cycle against
    itself one loop later instead of searching for a strike.
 4. **Two phrases.** The riff's last complete segment closes at 15.25 s and the
-   pad's region opens at 15.65 s, so no segment is shared and the file holds two
+   pad's region opens at 15.43 s, so no segment is shared and the file holds two
    phrases. Phrase membership comes from a full shared segment, never from the
-   recording being continuous; the 0.4 s between the regions belongs to neither.
-5. **Each pattern measures its own loop.** The two loop lengths, 3.01 and 3.00,
+   recording being continuous; the 0.18 s between the regions belongs to
+   neither.
+5. **Each pattern measures its own loop.** The two loop lengths, 3.01 and 3.18,
    are close but measured separately, and nothing requires them to agree to the
    millisecond or to be multiples of each other. Shared geometry is a property
    of the elements, not of the algorithm; the four riff rows share one grid only
    because they are four notes of one figure, so the grid is measured once from
-   the figure and used four times. Even this is technically arbitrary. The four patterns could be aligned to different portions of the segment (but no greater) and it would not be wrong. 
+   the figure and used four times. Even this is technically arbitrary. The four patterns could be aligned to different portions of the segment (but no greater) and it would not be wrong. The pad's pulse strikes four times per
+   measure, 0.795 s apart, so its loop is four of those strikes, and a grid of
+   3.00 s would fall 0.18 s further behind on every repetition. 
 6. **A slower period in the untracked content does not lengthen a pattern.**
    The notes around the F#2 pad come and go over spans of several measures, so that
    texture is coarser than the bar the pad's note returns on. A pattern's loop
@@ -170,9 +173,10 @@ measured gap.
    longer period followed only by other content is not a new element, so it
    neither extends the segment nor counts as a superpattern, which would need
    smaller patterns nested inside, and there are none.
-7. **Starts and remainders are measured.** 0.19 sits ahead of the riff's first
-   note, keeping that attack inside the first segment, and 15.65 is the pad's
-   entry. The pad still sounds at the end of the file, but its fifteenth segment
-   closes at 60.65 s, so the remaining 6.05 s, two more measures, sits outside
-   the region: a pattern ends at its last complete segment however much tail is
-   left.
+7. **Starts and ends are measured.** 0.19 sits ahead of the riff's first note,
+   keeping that attack inside the first segment, and 15.43 is the pad's entry,
+   where the first pulse of its grid strikes. The riff's grid closes at 15.25 s
+   and the pad's at 66.31 s, the end of its sixteenth measure. The recording's
+   last sound stops at 66.64 s, so the attack at 66.36 s opens a seventeenth
+   measure it never completes and that measure is dropped, with the silence
+   after 66.64 s staying outside every pattern.

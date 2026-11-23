@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>Calibration Diagrams</title>
+<style>
+  :root { --bg:#121216; --card:#1a1a22; --border:#2a2a36; --text:#e1e1e6; --muted:#a0a0b0; --accent:#2196f3; }
+  * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  body { background:var(--bg); color:var(--text); padding:20px; line-height:1.5; }
+  header { background:var(--card); padding:18px 20px; border-radius:10px; border:1px solid var(--border); margin-bottom:16px; }
+  h1 { font-size:1.45rem; color:#fff; margin-bottom:4px; }
+  code { font-family:monospace; font-size:0.85em; color:#cbd5e1; }
+  .meta { font-size:0.85rem; color:var(--muted); }
+  .hint { font-size:0.78rem; color:var(--muted); margin-top:10px; padding-top:10px; border-top:1px solid var(--border); font-style:italic; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:16px; }
+  .head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .name { font-weight:700; color:#fff; font-size:0.92rem; font-family:monospace; }
+  .view { margin-left:auto; font-size:0.78rem; color:#4caf50; font-family:monospace; font-weight:bold; }
+  .wrap { position:relative; width:100%; background:#0d0d11; border:1px solid #22222e; border-radius:6px; overflow:hidden; user-select:none; }
+  canvas { display:block; width:100%; aspect-ratio:4600 / 1600; cursor:crosshair; }
+  .tooltip { position:absolute; top:8px; right:12px; background:rgba(10,10,15,0.88); border:1px solid #333344; padding:5px 8px; border-radius:4px; font-size:0.74rem; font-family:monospace; color:#fff; pointer-events:none; opacity:0; transition:opacity 0.12s; max-width:calc(100% - 24px); }
+  .toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; }
+  audio { height:34px; outline:none; border-radius:4px; }
+  .btn { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:7px 14px; font-size:0.85rem; font-weight:600; cursor:pointer; }
+  .btn:hover { opacity:0.88; }
+  footer { font-size:0.78rem; color:var(--muted); padding:0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Calibration Diagrams</h1>
+  <div class="meta">One row per tracked element, drawn against the shared time axis by <code>diagram_template.py</code>. Each diagram and its audio are read from this folder.</div>
+  <div class="hint">Drag horizontally on a diagram to zoom into a time range. Right-click to zoom out one level. Click to jump the playhead there and play. Reset Zoom restores the whole file.</div>
+</header>
+<main id="cards"></main>
+<footer>Audio seeking needs byte-range support: <code>python3 ../pattern_report_server.py --root . --port 8000</code>, then open <code>http://127.0.0.1:8000/report.html</code>.</footer>
+<script>
+// Diagram geometry from diagram_template.py: every PNG is 4600 x 1600 and its time axis
+// runs from x=330 to x=4570. Each diagram is decoded on demand and drawn with a source
+// rect, so the page carries no waveform data - only one bitmap per section, ~29 MB each,
+// against the 192 MB budget the pattern reports allow for their waveform tiers.
+const IMG_W = 4600, IMG_H = 1600, AX0 = 330, AX1 = 4570;
+const DIAGRAMS = [
+  { id: 'a1', wav: 'test_audio_1.wav', png: 'test_audio_1.png', dur: 78.913, span: 78.913, sr: 44100, rows: 4 },
+  { id: 'a2', wav: 'test_audio_2.wav', png: 'test_audio_2.png', dur: 38.923, span: 39.400, sr: 44100, rows: 5 },
+  { id: 'a3', wav: 'test_audio_3.wav', png: 'test_audio_3.png', dur: 69.319, span: 69.319, sr: 44100, rows: 5 },
+];
+const MIN_SPAN = 0.30;
+const states = [];
+const cards = document.getElementById('cards');
+
+function fmt(t) {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(2);
+}
+
+for (const d of DIAGRAMS) {
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.innerHTML =
+    '<div class="head"><span class="name">' + d.wav + '</span>' +
+    '<span class="meta">' + fmt(d.dur) + ' &middot; ' + d.rows + ' rows</span>' +
+    '<span class="view" id="' + d.id + '-view"></span></div>' +
+    '<div class="wrap" id="' + d.id + '-wrap"><canvas id="' + d.id + '-canvas"></canvas>' +
+    '<div class="tooltip" id="' + d.id + '-tip"></div></div>' +
+    '<div class="toolbar"><audio id="' + d.id + '-audio" controls preload="metadata" src="' + d.wav + '"></audio>' +
+    '<button class="btn" id="' + d.id + '-reset">Reset Zoom</button></div>';
+  cards.appendChild(card);
+
+  const st = {
+    d: d,
+    canvas: card.querySelector('canvas'),
+    wrap: card.querySelector('.wrap'),
+    tip: card.querySelector('.tooltip'),
+    audio: card.querySelector('audio'),
+    view0: 0, view1: d.span, hist: [], img: null, drag: null, failed: false,
+  };
+  st.ctx = st.canvas.getContext('2d');
+  states.push(st);
+  attach(st);
+  requestAnimationFrame(() => draw(st));
+}
+
+// Decode a diagram only when its card comes near the viewport.
+const io = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    io.unobserve(e.target);
+    const st = states.find(s => s.wrap === e.target);
+    if (st && !st.img) loadImage(st);
+  }
+}, { rootMargin: '400px' });
+for (const st of states) io.observe(st.wrap);
+
+function loadImage(st) {
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => { st.img = img; draw(st); };
+  img.onerror = () => { st.failed = true; draw(st); };
+  img.src = st.d.png;
+}
+
+function timeAt(st, x, w) {
+  return st.view0 + Math.max(0, Math.min(1, x / w)) * (st.view1 - st.view0);
+}
+
+function pxSpan(st) {
+  return (st.view1 - st.view0) / st.d.span * (AX1 - AX0);
+}
+
+function draw(st) {
+  const c = st.canvas, ctx = st.ctx;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0d0d11';
+  ctx.fillRect(0, 0, w, h);
+  if (!st.img) {
+    ctx.fillStyle = '#a0a0b0';
+    ctx.font = '12px monospace';
+    ctx.fillText(st.failed ? 'diagram failed to load' : 'loading diagram\u2026', 12, 22);
+    return;
+  }
+  const sx = AX0 + st.view0 / st.d.span * (AX1 - AX0);
+  const sw = Math.max(1, pxSpan(st));
+  ctx.imageSmoothingEnabled = sw > w;
+  ctx.drawImage(st.img, sx, 0, Math.min(sw, IMG_W - sx), IMG_H, 0, 0, w, h);
+
+  if (st.drag && Math.abs(st.drag.x1 - st.drag.x0) > 4) {
+    const a = Math.min(st.drag.x0, st.drag.x1), b = Math.max(st.drag.x0, st.drag.x1);
+    ctx.fillStyle = 'rgba(33,150,243,0.18)';
+    ctx.fillRect(a, 0, b - a, h);
+    ctx.strokeStyle = 'rgba(33,150,243,0.85)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(a + 0.5, 0.5, b - a - 1, h - 1);
+  }
+
+  const t = st.audio.currentTime;
+  if (t >= st.view0 && t <= st.view1) {
+    const x = (t - st.view0) / (st.view1 - st.view0) * w;
+    ctx.strokeStyle = '#ff5252';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  updateView(st);
+}
+
+function updateView(st) {
+  document.getElementById(st.d.id + '-view').textContent =
+    fmt(st.view0) + ' \u2013 ' + fmt(st.view1) + '  (x' + (st.d.span / (st.view1 - st.view0)).toFixed(1) + ')';
+}
+
+function zoomTo(st, a, b) {
+  a = Math.max(0, Math.min(st.d.span, a));
+  b = Math.max(0, Math.min(st.d.span, b));
+  if (b - a < MIN_SPAN) return;
+  st.hist.push({ a: st.view0, b: st.view1 });
+  st.view0 = a;
+  st.view1 = b;
+  draw(st);
+}
+
+function zoomOut(st) {
+  const prev = st.hist.pop();
+  if (!prev) return;
+  st.view0 = prev.a;
+  st.view1 = prev.b;
+  draw(st);
+}
+
+function resetZoom(st) {
+  st.hist = [];
+  st.view0 = 0;
+  st.view1 = st.d.span;
+  draw(st);
+}
+
+function seekAndPlay(st, t) {
+  t = Math.max(0, Math.min(st.d.dur, t));
+  const go = () => {
+    try { st.audio.currentTime = t; } catch (e) {}
+    draw(st);
+    const p = st.audio.play();
+    if (p && p.catch) p.catch(() => {});
+  };
+  if (st.audio.readyState >= 1) return go();
+  st.audio.addEventListener('loadedmetadata', go, { once: true });
+  st.audio.load();
+}
+
+function attach(st) {
+  const c = st.canvas;
+  c.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const r = c.getBoundingClientRect();
+    const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+    st.drag = { x0: x, x1: x };
+    draw(st);
+  });
+
+  c.addEventListener('mousemove', (e) => {
+    const r = c.getBoundingClientRect();
+    const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+    if (st.drag) st.drag.x1 = x;
+    const t = timeAt(st, x, r.width);
+    st.tip.innerHTML = 'Time ' + fmt(t) + ' &middot; sample ' +
+      Math.round(Math.min(t, st.d.dur) * st.d.sr);
+    st.tip.style.opacity = '1';
+    draw(st);
+  });
+
+  c.addEventListener('mouseup', (e) => {
+    if (!st.drag) return;
+    const d = st.drag, w = c.clientWidth;
+    st.drag = null;
+    if (Math.abs(d.x1 - d.x0) > 4) {
+      zoomTo(st, timeAt(st, Math.min(d.x0, d.x1), w), timeAt(st, Math.max(d.x0, d.x1), w));
+    } else {
+      seekAndPlay(st, timeAt(st, d.x0, w));
+    }
+    draw(st);
+  });
+
+  c.addEventListener('mouseleave', () => {
+    st.drag = null;
+    st.tip.style.opacity = '0';
+    draw(st);
+  });
+
+  c.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    zoomOut(st);
+  });
+
+  document.getElementById(st.d.id + '-reset').addEventListener('click', () => resetZoom(st));
+  st.audio.addEventListener('seeked', () => draw(st));
+  st.audio.addEventListener('timeupdate', () => draw(st));
+  st.audio.addEventListener('play', startPlayhead);
+  st.audio.addEventListener('pause', () => draw(st));
+  st.audio.addEventListener('ended', () => draw(st));
+  window.addEventListener('resize', () => draw(st));
+}
+
+// One animation loop drives every section that is currently playing.
+let raf = 0;
+function startPlayhead() {
+  if (raf) return;
+  const step = () => {
+    raf = 0;
+    let live = false;
+    for (const st of states) {
+      if (st.audio.paused) continue;
+      live = true;
+      draw(st);
+    }
+    if (live) raf = requestAnimationFrame(step);
+  };
+  raf = requestAnimationFrame(step);
+}
+</script>
+</body>
+</html>
