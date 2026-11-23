@@ -123,9 +123,9 @@ dropped.** However, as seen here, the last segment cannot be cut short by a sepa
 8. **The four-strike blocks are themselves one pattern.** Each is the same shape
 at the same scale: four strikes of one chord on the 1.34 s grid, then a short
 gap, 5.4 s in all. Six of them run back to back from 0.40 s to 32.71 s, so that
-run is a superpattern one level up, with a 10.77 s loop and three segments:
-0.40–11.17, 11.17–21.94 and 21.94–32.71 s. A segment spans two blocks and the
-space around them, just as a normal segment holds one tracked element plus the
-space around it, so the loop is a pair of blocks rather than one strike, and the
-1.34 s grid stays inside the segments as their content. Nothing is re-measured:
-the segments are the smaller patterns taken whole.
+run is a superpattern one level up with a 10.77 s loop, its divisions landing on
+the D4 boxes' own left edges at 11.21 and 21.81 s. A segment spans two blocks
+and the space around them, just as a normal segment holds one tracked element
+plus the space around it, so the loop is a pair of blocks rather than one
+strike, and the 1.34 s grid stays inside the segments as their content. Nothing
+is re-measured: the segments are the smaller patterns taken whole.

@@ -38,9 +38,9 @@ ROWS = {
 RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
          "test_audio_2": (473, 715, 957, 1199, 1439.5)}
 
-# color, box path top/bottom (px), start, loop, segments
+# color, box path top/bottom (px), start, end, segment boundaries (s)
 SUPERS = {
-    "test_audio_2": [("#f12a1e", (234, 470), 0.40, 10.77, 3)],
+    "test_audio_2": [("#f12a1e", (234, 470), 0.40, 32.71, (11.21, 21.81))],
 }
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
@@ -140,12 +140,12 @@ def main(name):
         fig.text(x_px / W, 1 - y_px / H, s, fontsize=size, color=color,
                  fontweight=weight, ha=ha, va="baseline")
 
-    for color, (top, bottom), start, loop, count in SUPERS.get(name, []):
-        ax.add_patch(Rectangle((start, y(bottom)), loop * count, y(top) - y(bottom),
-                               fill=False, edgecolor=color, lw=3.15, alpha=0.5, zorder=6))
-        for j in range(1, count):
-            ax.plot([start + j * loop] * 2, [y(bottom), y(top)],
-                    color=color, lw=1.05, dashes=(2.0, 2.0), zorder=6)
+    for color, (top, bottom), start, end, splits in SUPERS.get(name, []):
+        ax.add_patch(Rectangle((start, y(bottom)), end - start, y(top) - y(bottom),
+                               fill=False, edgecolor=color, lw=5.25, alpha=0.5, zorder=6))
+        for t in splits:
+            ax.plot([t] * 2, [y(bottom), y(top)], color=color, lw=1.05, dashes=(2.0, 2.0),
+                    zorder=6)
 
     text(51, 89, wav.name, 15.5, "#ffffff", "bold")
     text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono", 8.8, MUTED)
