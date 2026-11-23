@@ -33,10 +33,20 @@ ROWS = {
         ("G/D3", "#3ad07d", (958, 1198), (27.35,), 1.340, [(0, 4)]),
         ("F#3", "#2f9bff", (1200, 1439), (0.40,), 1.340, [(0, 16)]),
     ],
+    # the riff's four notes are four elements sharing one figure and one grid;
+    # the pad tracks only the note that opens each of its measures
+    "test_audio_3": [
+        ("D#2", "#f12a1e", (232, 472), 0.19, 3.012, [(0, 5)]),
+        ("G#1", "#f4695a", (474, 714), 0.19, 3.012, [(0, 5)]),
+        ("C#2", "#f1ad03", (716, 956), 0.19, 3.012, [(0, 5)]),
+        ("A#1", "#3ad07d", (958, 1198), 0.19, 3.012, [(0, 5)]),
+        ("F#2", "#2f9bff", (1200, 1439), 15.65, 3.000, [(0, 15)]),
+    ],
 }
 
 RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
-         "test_audio_2": (473, 715, 957, 1199, 1439.5)}
+         "test_audio_2": (473, 715, 957, 1199, 1439.5),
+         "test_audio_3": (473, 715, 957, 1199, 1439.5)}
 
 # color, box path top/bottom (px), start, end, segment boundaries (s)
 SUPERS = {
@@ -53,9 +63,10 @@ WAVES = {
         (1139, 1439, 0.514, 1.143, "top"),
     ],
     "test_audio_2": [(232, 1439, 0.12, 0.52, "center")],
+    "test_audio_3": [(232, 1439, 0.02, 0.42, "center")],
 }
 
-TRACE = {"test_audio_1": "peak", "test_audio_2": "rms"}
+TRACE = {"test_audio_1": "peak", "test_audio_2": "rms", "test_audio_3": "peak"}
 PAD = 2  # px between a pattern box and its row edges
 
 

@@ -113,3 +113,66 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The segment count is the number of tracked elements heard.** One whole segment for each repetition, as long as the tracked element exists within it, and no partials. A last segment cannot be cut off by a new pattern starting because that pattern would be on its own row. 
 8. **There is one superpattern in this example.** Superpatterns can be identified by looking at just a single set of repeating patterns, i.e. one row only on the diagram at a time. Each segment should include the subpattern as well as the non-pattern space in the repetition, just like a normal pattern contains a tracked element and the non-tracked element space in the segment. Here, this results in three equal segments. Superpatterns can be identified without having to reanalyze or measure anything since they are only multiples of smaller patterns which have already been mapped and drawn — notice how the superpattern could be identified simply by looking at the stats table above. Of note is that the third line (E4) has two patterns that repeat but this does not result in a superpattern because the basic pattern requirement of having at least three segments still holds. 
+
+# test_audio_3.wav
+
+![test_audio_3](test_audio_3.png)
+
+## Results
+
+| Tracked element | Segment length (s) | Segments | Region (s) |
+|---|---:|---:|---|
+| D#2 | 3.01 | 5 | 0.19–15.25 |
+| G#1 | 3.01 | 5 | 0.19–15.25 |
+| C#2 | 3.01 | 5 | 0.19–15.25 |
+| A#1 | 3.01 | 5 | 0.19–15.25 |
+| F#2 | 3.00 | 15 | 15.65–60.65 |
+
+## Discussion
+
+1. **A note that keeps its place is a tracked element.** The first phrase plays
+   four low notes on one instrument in a fixed order and rhythm, and each note
+   returns to its own place in the bar. Four elements, so four patterns, each on
+   its own row with the same region and the same segments. Pitch separates them,
+   as in test_audio_2, and a pattern shared exactly by another element is still
+   two patterns, as with test_audio_1's kick and cymbal. The figure itself is
+   not an element: nothing inside it repeats at an interval shorter than the
+   bar, so the bar is what each note's own return measures.
+2. **The second phrase is one pattern for the opposite reason.** Its first note
+   is the only element that holds the same place in every repetition; the notes
+   after it land elsewhere from one measure to the next. An element that never
+   returns to its position cannot repeat in the same place, so those notes yield
+   no pattern even though they are plainly heard. This is the contrast the file
+   exists to show: four notes at fixed places give four patterns, one note at a
+   fixed place gives one, and the count comes from how many elements keep a
+   position rather than how many notes are present.
+3. **An element without an attack is still an element.** Nothing strikes the
+   pad's note: it is a held F#2 that swells, so no transient marks the start of
+   its measures. Its identity is its pitch plus the shape of its cycle, which
+   the definition's "specific pitch that occurs in the same position in the
+   segment" already covers; making an onset a precondition would hide the only
+   element this phrase tracks. Where there is no attack, match the cycle against
+   itself one loop later instead of searching for a strike.
+4. **Two phrases.** The riff's last complete segment closes at 15.25 s and the
+   pad's region opens at 15.65 s, so no segment is shared and the file holds two
+   phrases. Phrase membership comes from a full shared segment, never from the
+   recording being continuous; the 0.4 s between the regions belongs to neither.
+5. **Each pattern measures its own loop.** The two loop lengths, 3.01 and 3.00,
+   are close but measured separately, and nothing requires them to agree to the
+   millisecond or to be multiples of each other. Shared geometry is a property
+   of the elements, not of the algorithm: the four riff rows share one grid only
+   because they are four notes of one figure, so the grid is measured once from
+   the figure and used four times.
+6. **A slower period in the untracked content does not lengthen a pattern.**
+   The notes around the pad come and go over spans of several measures, so that
+   texture is coarser than the bar the pad's note returns on. A pattern's loop
+   is the shortest interval at which its own element lands in the same place; a
+   longer period followed only by other content is not a new element, so it
+   neither extends the segment nor counts as a superpattern, which would need
+   smaller patterns nested inside, and there are none.
+7. **Starts and remainders are measured.** 0.19 sits ahead of the riff's first
+   note, keeping that attack inside the first segment, and 15.65 is the pad's
+   entry. The pad still sounds at the end of the file, but its fifteenth segment
+   closes at 60.65 s, so the remaining 6.05 s, two more measures, sits outside
+   the region: a pattern ends at its last complete segment however much tail is
+   left.
