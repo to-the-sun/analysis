@@ -453,8 +453,9 @@ void analyzer_update_metrics(TransientAnalyzer* self, int frame, AnalyzerMetrics
 
     if (self->unlock_func) self->unlock_func(self->lock_obj);
 
+    metrics_out->bar = metrics_out->highest_peak_valid ? fabs(metrics_out->highest_peak_ms) : 0.0;
     if (metrics_out->highest_peak_valid) {
-        int bar_length = (int)round(fabs(metrics_out->highest_peak_ms));
+        int bar_length = (int)round(metrics_out->bar);
         if (bar_length >= 0 && bar_length <= self->window_ms) {
             self->bar_length_counts[bar_length]++;
         }

@@ -45,6 +45,7 @@ typedef struct {
     int buffer_updated;
     double highest_peak_ms;
     int highest_peak_valid;
+    double bar;
     double min_score_seen;
     double max_score_seen;
     double demarcation_line;
