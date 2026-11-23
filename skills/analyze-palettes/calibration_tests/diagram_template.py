@@ -144,8 +144,8 @@ def main(name):
         ax.add_patch(Rectangle((start, y(bottom)), end - start, y(top) - y(bottom),
                                fill=False, edgecolor=color, lw=5.25, alpha=0.5, zorder=6))
         for t in splits:
-            ax.plot([t] * 2, [y(bottom), y(top)], color=color, lw=1.05, dashes=(2.0, 2.0),
-                    zorder=6)
+            ax.plot([t] * 2, [y(bottom), y(top)], color=color, lw=5.25, alpha=0.5,
+                    dashes=(2.0, 2.0), zorder=6)  # dash lengths scale with lw
 
     text(51, 89, wav.name, 15.5, "#ffffff", "bold")
     text(50, 135, f"{duration:.1f} s · {sr / 1000:.1f} kHz · mono", 8.8, MUTED)
