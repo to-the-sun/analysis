@@ -40,7 +40,7 @@ RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
 
 # name, color, row band top/bottom (px), start, loop, segments
 SUPERS = {
-    "test_audio_2": [("super pattern", "#e9edf5", (229, 1199), 0.40, 5.385, 6)],
+    "test_audio_2": [("superpattern", "#f12a1e", (TOP, 472), 0.40, 5.385, 6)],
 }
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
