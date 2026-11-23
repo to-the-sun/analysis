@@ -9,8 +9,9 @@ measured beat positions.
 segments**, running from its measured start to the end of its last complete
 segment. The rectangle bounds it. Patterns are derived by tracking some distinct fundamental element that repeats in the same place in the segment, segment by segment. This could be an identifiably unique onset or a specific pitch that occurs in the same position in the segment. Patterns are independent of each other;
 two patterns can share a segment length and still count separately because they are tracking different contents in their repetitions, i.e. an onset in one position of the segment (and/or timbre or pitch) versus another.
+- **Super Pattern**: a pattern comprised of, rather than tracked elements repeating, other smaller patterns repeating. 
 - **Phrase**: the full extent of the audio from the beginning to the end of all
-of its patterns that overlap by at least one full segment. 
+of its patterns and super patterns that overlap by at least one full segment. 
 - **Palette**: a full jam session recorded beginning to end with no editing. Palettes are analyzed for their patterns and have their phrases extracted before building the final song.
 - **Stem**: a single instrument track of the final song. Stems are not relevant during this analysis step and only come into play later when the song is constructed.
 
