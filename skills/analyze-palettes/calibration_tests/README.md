@@ -30,7 +30,7 @@ Each test phrase below will have a key with the "correct" stats that should be d
   first tracked onset, so no attack is split by a segment edge.
 - The dashed verticals divide the row into segments, one per loop
   iteration, at the pattern's loop length.
-- Any super patterns present are drawn on the diagram in the same rectangles and dashed verticals as other patterns but with thicker lines and lighter opacity.
+- Any superpatterns present are drawn on the diagram in the same rectangles and dashed verticals as other patterns but with thicker lines and lighter opacity.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
