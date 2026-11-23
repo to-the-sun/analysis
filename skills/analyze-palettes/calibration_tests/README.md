@@ -32,9 +32,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
   iteration, at the pattern's loop length.
 - The **red rectangle** in the top row is a superpattern: that row's repeating
   block is itself one pattern, so the rectangle marks how far the repetition
-  runs. It has no row of its own; each of its segments holds one of the smaller
-  patterns below it plus the untracked space after it, so its own dashed
-  divisions fall in those spaces between them.
+  runs. It has no row of its own; each of its segments spans two of the smaller
+  patterns below it plus the space around them, on a grid of twice their
+  period.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
@@ -79,7 +79,7 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
 | G/D3 | 1.34 | 4 | 27.35–32.71 |
 | F#3 | 1.34 | 16 | 0.40–21.84 |
-| four-strike block (superpattern) | 5.39 | 3 | 0.40–16.57 |
+| two four-strike blocks (superpattern) | 10.77 | 3 | 0.40–32.71 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
@@ -122,10 +122,10 @@ measured gap.
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
 8. **The four-strike blocks are themselves one pattern.** Each is the same shape
 at the same scale: four strikes of one chord on the 1.34 s grid, then a short
-gap, 5.4 s in all. Three of them, the minimum a pattern needs, run back to back
-from 0.40 s, giving a superpattern one level up with a 5.39 s loop and segments
-of 0.40–5.79, 5.79–11.18 and 11.18–16.57 s. A segment holds one whole block
-plus the untracked space after it, just as a normal segment holds one tracked
-element plus the space around it, so the loop is one block and not one strike,
-and the 1.34 s grid stays inside the segments as their content. Nothing is
-re-measured: the segments are the smaller patterns taken whole.
+gap, 5.4 s in all. Six of them run back to back from 0.40 s to 32.71 s, so that
+run is a superpattern one level up, with a 10.77 s loop and three segments:
+0.40–11.17, 11.17–21.94 and 21.94–32.71 s. A segment spans two blocks and the
+space around them, just as a normal segment holds one tracked element plus the
+space around it, so the loop is a pair of blocks rather than one strike, and the
+1.34 s grid stays inside the segments as their content. Nothing is re-measured:
+the segments are the smaller patterns taken whole.

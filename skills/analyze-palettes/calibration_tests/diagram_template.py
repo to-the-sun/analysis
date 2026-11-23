@@ -38,9 +38,9 @@ ROWS = {
 RULES = {"test_audio_1": (534, 836, 1138, 1439.5),
          "test_audio_2": (473, 715, 957, 1199, 1439.5)}
 
-# color, row band top/bottom (px), start, loop, segments
+# color, box path top/bottom (px), start, loop, segments
 SUPERS = {
-    "test_audio_2": [("#f12a1e", (TOP, 472), 0.40, 5.39, 3)],
+    "test_audio_2": [("#f12a1e", (234, 470), 0.40, 10.77, 3)],
 }
 
 # bands the single waveform is drawn in: top/bottom px, envelope range, edge it grows from,
