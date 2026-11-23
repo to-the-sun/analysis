@@ -1646,7 +1646,7 @@ static DWORD WINAPI rating_worker(void *unused)
             ownCount = ratingScores.score_count - countBefore;
         }
         for (int i = 0; i < ratingCopyCount; i++) rating_copy_step(&ratingCopies[i], elapsed, chunk);
-        if (ratingOwn || ratingCopyCount) ratingBar = chunk->metrics.bar;
+        if (ratingOwn || ratingCopyCount) ratingBar = chunk->metrics.highest_peak_valid ? fabs(chunk->metrics.highest_peak_ms) : 0.0;
 
         double sum = ratingScores.total_score_sum - sumBefore;
         int count = ratingScores.score_count - countBefore;
