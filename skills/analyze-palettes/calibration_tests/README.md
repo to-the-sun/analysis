@@ -120,12 +120,4 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
-8. **The four-strike blocks are themselves one pattern.** Each is the same shape
-at the same scale: four strikes of one chord on the 1.34 s grid, then a short
-gap, 5.4 s in all. Six of them run back to back from 0.40 s to 32.71 s, so that
-run is a superpattern one level up with a 10.77 s loop, its divisions landing on
-the D4 boxes' own left edges at 11.21 and 21.81 s. A segment spans two blocks
-and the space around them, just as a normal segment holds one tracked element
-plus the space around it, so the loop is a pair of blocks rather than one
-strike, and the 1.34 s grid stays inside the segments as their content. Nothing
-is re-measured: the segments are the smaller patterns taken whole.
+8. **There is one superpattern in this example.** It is drawn on the diagram in the same rectangles and dashed verticals as other patterns but with thicker lines and lighter opacity. Superpatterns can be identified by looking at just a single set of repeating patterns, i.e. one row only on the diagram at a time. Each segment should include the subpattern as well as the non-pattern space in the repetition, just like a normal pattern contains a tracked element and the non-tracked element space in the segment. Here, this results in three equal segments. Superpatterns can be identified without having to reanalyze or measure anything since they are only multiples of smaller patterns which have already been mapped and drawn. Of note is that the third line (E4) has two patterns that repeat but this does not result in a superpattern because the basic pattern requirement of having at least three segments still holds. 
