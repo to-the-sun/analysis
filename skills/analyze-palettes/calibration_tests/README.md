@@ -25,16 +25,12 @@ Each test phrase below will have a key with the "correct" stats that should be d
 
 - The gray trace is the same waveform drawn once per pattern, so every pattern
   has its own row against the shared time axis. The waveform is a single mono recording; every row comes from the same audio and nothing here is a stack of separate stems.
-- The **outer rectangle** is the whole pattern: from its measured start to
+- The outer rectangle is the whole pattern: from its measured start to
   the end of its last complete segment. Its start sits part of a loop before the
   first tracked onset, so no attack is split by a segment edge.
-- The **dashed verticals** divide the row into segments, one per loop
+- The dashed verticals divide the row into segments, one per loop
   iteration, at the pattern's loop length.
-- The **red rectangle** in the top row is a superpattern: that row's repeating
-  block is itself one pattern, so the rectangle marks how far the repetition
-  runs. It has no row of its own; each of its segments spans two of the smaller
-  patterns below it plus the space around them, on a grid of twice their
-  period.
+- Any super patterns present are drawn on the diagram in the same rectangles and dashed verticals as other patterns but with thicker lines and lighter opacity.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
@@ -120,4 +116,4 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
-8. **There is one superpattern in this example.** It is drawn on the diagram in the same rectangles and dashed verticals as other patterns but with thicker lines and lighter opacity. Superpatterns can be identified by looking at just a single set of repeating patterns, i.e. one row only on the diagram at a time. Each segment should include the subpattern as well as the non-pattern space in the repetition, just like a normal pattern contains a tracked element and the non-tracked element space in the segment. Here, this results in three equal segments. Superpatterns can be identified without having to reanalyze or measure anything since they are only multiples of smaller patterns which have already been mapped and drawn. Of note is that the third line (E4) has two patterns that repeat but this does not result in a superpattern because the basic pattern requirement of having at least three segments still holds. 
+8. **There is one superpattern in this example.** Superpatterns can be identified by looking at just a single set of repeating patterns, i.e. one row only on the diagram at a time. Each segment should include the subpattern as well as the non-pattern space in the repetition, just like a normal pattern contains a tracked element and the non-tracked element space in the segment. Here, this results in three equal segments. Superpatterns can be identified without having to reanalyze or measure anything since they are only multiples of smaller patterns which have already been mapped and drawn. Of note is that the third line (E4) has two patterns that repeat but this does not result in a superpattern because the basic pattern requirement of having at least three segments still holds. 
