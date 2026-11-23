@@ -30,6 +30,9 @@ Each test phrase below will have a key with the "correct" stats that should be d
   first tracked onset, so no attack is split by a segment edge.
 - The **dashed verticals** divide the row into segments, one per loop
   iteration, at the pattern's loop length.
+- The **white rectangle** is a super pattern. It has no row of its own: its
+  segments are the smaller patterns in the rows it encloses, drawn inside it,
+  so their own boxes mark its divisions.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
@@ -74,6 +77,7 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
 | G/D3 | 1.34 | 4 | 27.35–32.71 |
 | F#3 | 1.34 | 16 | 0.40–21.84 |
+| four-strike block (super pattern) | 5.38 | 6 | 0.40–32.71 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
@@ -114,3 +118,34 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
+
+### Super pattern
+
+8. **The six four-strike blocks in the upper rows are themselves one pattern.**
+   Each of them is the same shape at the same scale: four strikes of one chord
+   on the 1.34 s grid, then a short gap, 5.4 s in all. They run back to back
+   from 0.40 s to 32.71 s, so the sequence is a pattern one level up whose
+   segments are those six patterns. Its placement follows from five rules:
+   - **The segments are already-mapped patterns, used whole.** 0.40–5.76,
+     5.80–11.16, 11.21–16.57, 16.53–21.89, 21.81–27.17 and 27.35–32.71 s. No
+     smaller pattern is split to make a segment and nothing is re-measured,
+     because a super pattern is built from regions the steps above already
+     settled.
+   - **The loop is one block, not one strike.** A super pattern's segment holds
+     exactly one smaller pattern, so its loop is that pattern's whole region
+     plus the gap that follows it: 5.38 s over the six blocks, against 1.34 s
+     for the smaller patterns. The 1.34 s grid remains inside the segments as
+     their own content and does not become the super pattern's grid.
+   - **Six segments clear the minimum of three at the block period, and the
+     turn-taking pair cannot.** D4 and E4 alternate, but the pair repeats only
+     twice, below the three-segment minimum, so the alternation is not a second
+     pattern and the six-block run is the only super pattern here.
+   - **A change of chord is content one level down; a change of block length is
+     not.** The sixth block moves to G/D3 yet keeps the block's shape and grid,
+     and the pitch is already accounted for by its own smaller pattern in row
+     four, so it completes the run. The closing D4 strikes at 1.58 s, giving
+     6.32 s blocks, so the block shape itself changes there and the super
+     pattern ends at 32.71 s, its last complete block.
+   - **The run is contiguous.** No block is missing between the first and the
+     last, so one rectangle covers all six instead of several spans, running
+     from the first block's measured start to the end of the last block.
