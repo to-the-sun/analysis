@@ -142,12 +142,11 @@ measured gap.
    is the only element that holds the same place in every repetition; the notes
    after it land elsewhere from one measure to the next. An element that never
    returns to its position cannot repeat in the same place, so those notes yield
-   no pattern even though they are plainly heard. This is the contrast the file
-   exists to show: four notes at fixed places give four patterns, one note at a
+   no pattern even though they are plainly heard. Four notes at fixed places give four patterns, one note at a
    fixed place gives one, and the count comes from how many elements keep a
    position rather than how many notes are present.
 3. **An element without an attack is still an element.** Nothing strikes the
-   pad's note: it is a held F#2 that swells, so no transient marks the start of
+   pad's note; it is a held F#2 that swells, so no transient marks the start of
    its measures. Its identity is its pitch plus the shape of its cycle, which
    the definition's "specific pitch that occurs in the same position in the
    segment" already covers; making an onset a precondition would hide the only
@@ -160,11 +159,11 @@ measured gap.
 5. **Each pattern measures its own loop.** The two loop lengths, 3.01 and 3.00,
    are close but measured separately, and nothing requires them to agree to the
    millisecond or to be multiples of each other. Shared geometry is a property
-   of the elements, not of the algorithm: the four riff rows share one grid only
+   of the elements, not of the algorithm; the four riff rows share one grid only
    because they are four notes of one figure, so the grid is measured once from
-   the figure and used four times.
+   the figure and used four times. Even this is technically arbitrary. The four patterns could be aligned to different portions of the segment (but no greater) and it would not be wrong. 
 6. **A slower period in the untracked content does not lengthen a pattern.**
-   The notes around the pad come and go over spans of several measures, so that
+   The notes around the F#2 pad come and go over spans of several measures, so that
    texture is coarser than the bar the pad's note returns on. A pattern's loop
    is the shortest interval at which its own element lands in the same place; a
    longer period followed only by other content is not a new element, so it
