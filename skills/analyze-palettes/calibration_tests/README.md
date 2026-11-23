@@ -9,9 +9,9 @@ measured beat positions.
 segments**, running from its measured start to the end of its last complete
 segment. The rectangle bounds it. Patterns are derived by tracking some distinct fundamental element that repeats in the same place in the segment, segment by segment. This could be an identifiably unique onset or a specific pitch that occurs in the same position in the segment. Patterns are independent of each other;
 two patterns can share a segment length and still count separately because they are tracking different contents in their repetitions, i.e. an onset in one position of the segment (and/or timbre or pitch) versus another.
-- **Super Pattern**: a pattern comprised of, rather than tracked elements repeating, other smaller patterns repeating. 
+- **Superpattern**: a pattern comprised of, rather than tracked elements repeating, other smaller patterns repeating. 
 - **Phrase**: the full extent of the audio from the beginning to the end of all
-of its patterns and super patterns that overlap by at least one full segment. 
+of its patterns and superpatterns that overlap by at least one full segment. 
 - **Palette**: a full jam session recorded beginning to end with no editing. Palettes are analyzed for their patterns and have their phrases extracted before building the final song.
 - **Stem**: a single instrument track of the final song. Stems are not relevant during this analysis step and only come into play later when the song is constructed.
 
@@ -30,6 +30,11 @@ Each test phrase below will have a key with the "correct" stats that should be d
   first tracked onset, so no attack is split by a segment edge.
 - The **dashed verticals** divide the row into segments, one per loop
   iteration, at the pattern's loop length.
+- The **red rectangle** in the top row is a superpattern: that row's repeating
+  block is itself one pattern, so the rectangle marks how far the repetition
+  runs. It has no row of its own; each of its segments spans two of the smaller
+  patterns below it plus the space around them, on a grid of twice their
+  period.
 - The row label gives a subjective description of the element being tracked (these are by no means standard and could be anything that helps orient the listener to the pattern evident) and `loop × segments`.
   
 # test_audio_1.wav
@@ -74,6 +79,7 @@ Each test phrase below will have a key with the "correct" stats that should be d
 | E4 | 1.34 | 4, 4 | 5.80–11.16, 16.53–21.89 |
 | G/D3 | 1.34 | 4 | 27.35–32.71 |
 | F#3 | 1.34 | 16 | 0.40–21.84 |
+| two four-strike blocks (superpattern) | 10.77 | 3 | 0.40–32.71 |
 
 The second D4 row is drawn in a lighter red: same element, slower segment
 spacing.
@@ -114,3 +120,12 @@ measured gap.
 6. **Starts are arbitrary.** Nothing is snapped to a common grid for its own sake; the rows happen to agree simply because the audio puts them on the same pulse. The important part is that the tracked elements are encompassed by their segments and not cut off by a division. 
 7. **The cycle count is the number of strikes heard and the remainder is
 dropped.** However, as seen here, the last segment cannot be cut short by a separate pattern starting on another row, so it is appropriate for the pattern to count that last segment at its full length, as long as the tracked element exists within it as it does the others. 
+8. **The four-strike blocks are themselves one pattern.** Each is the same shape
+at the same scale: four strikes of one chord on the 1.34 s grid, then a short
+gap, 5.4 s in all. Six of them run back to back from 0.40 s to 32.71 s, so that
+run is a superpattern one level up with a 10.77 s loop, its divisions landing on
+the D4 boxes' own left edges at 11.21 and 21.81 s. A segment spans two blocks
+and the space around them, just as a normal segment holds one tracked element
+plus the space around it, so the loop is a pair of blocks rather than one
+strike, and the 1.34 s grid stays inside the segments as their content. Nothing
+is re-measured: the segments are the smaller patterns taken whole.
