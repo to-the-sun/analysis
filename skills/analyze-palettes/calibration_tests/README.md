@@ -170,9 +170,8 @@ measured gap.
    longer period followed only by other content is not a new element, so it
    neither extends the segment nor counts as a superpattern, which would need
    smaller patterns nested inside, and there are none.
-7. **Starts and remainders are measured.** 0.19 sits ahead of the riff's first
-   note, keeping that attack inside the first segment, and 15.65 is the pad's
-   entry. The pad still sounds at the end of the file, but its fifteenth segment
-   closes at 60.65 s, so the remaining 6.05 s, two more measures, sits outside
-   the region: a pattern ends at its last complete segment however much tail is
-   left.
+7. **Starts and ends are measured.** 0.19 sits ahead of the riff's first note,
+   keeping that attack inside the first segment, and 15.65 is the pad's entry.
+   The riff's grid closes at 15.25 s and the pad's at 60.65 s, the file's last
+   sample: the pad's two further measures were cut from the recording rather
+   than left as a tail, so the region and the file end together.
