@@ -122,61 +122,57 @@ measured gap.
 
 | Tracked element | Segment length (s) | Segments | Region (s) |
 |---|---:|---:|---|
-| bass riff | 3.01 | 5 | 0.19–15.25 |
-| F#2 drone | 9.00 | 5 | 15.65–60.65 |
+| D#2 | 3.01 | 5 | 0.19–15.25 |
+| G#1 | 3.01 | 5 | 0.19–15.25 |
+| C#2 | 3.01 | 5 | 0.19–15.25 |
+| A#1 | 3.01 | 5 | 0.19–15.25 |
+| F#2 | 3.00 | 15 | 15.65–60.65 |
 
 ## Discussion
 
-1. **The tracked element is the whole figure, not one note.** The first phrase
-holds four low pitches in a fixed order and rhythm (Eb, Ab, Db, Bb) played on
-one instrument. Each of them sits in its own place inside the figure, so
-nothing repeats on the note spacing alone: only a span long enough to hold the
-whole figure returns the same thing next time. That figure is the element, and
-the notes are a subdivision inside its segment, not rows of their own.
-test_audio_2 could treat each pitch separately because there each pitch was the
-entire gesture; here the gesture is the sequence. Say what is identical in every
-repetition before measuring how long the repetition is.
-2. **An element without an attack is still an element.** Nothing is struck in
-the second phrase: the repeating thing is a held F#2 whose tremolo and upper
-partials swell and thin. There is no onset to hang the grid on, so its identity
-is carried by pitch plus the shape of the cycle. Its loop was measured by how
-well a whole frame matches the frame one loop later, then confirmed cycle by
-cycle, and its start is where a cycle begins, at the pad's entry. The
-definitions already allow "a specific pitch that occurs in the same position in
-the segment"; a sustained note meets that as well as a stab does, so a transient
-should not be a precondition for tracking.
-3. **One file can hold two phrases.** The riff's last complete segment closes at
-15.25 s and the pad's region opens at 15.65 s, so the two patterns share no
-segment and cannot be one phrase. Phrase membership comes from patterns
-overlapping by at least a full segment, never from the file being continuous,
-and the 0.4 s between them belongs to no region. This is the first calibration
-file whose patterns do not all overlap; a palette that changes section is
-expected to yield more than one phrase rather than one grid stretched across the
-change.
-4. **Each phrase's loop is measured on its own terms.** 9.00 s is near three
-riff loops (3 × 3.012 = 9.036) but 36 ms away, several times the precision of
-either loop peak, and the second phrase begins 5.2 riff segments into the file.
-Deriving one loop from the other, or imposing a shared bar, would slide the
-pad's grid progressively out of phase and cost it its cycle-to-cycle match.
-Segment lengths need not be multiples of each other, so measure each region
-separately and let the two grids fall where they fall.
-5. **A superpattern is built from patterns, not from subdivisions.** The pad's
-cycle contains motion repeating at roughly 3 s and 1 s, but those never stand
-alone as three or more segments of a distinct element, and the 3 s alignment is
-measurably weaker than the 9 s one (0.80 against 0.87 mean similarity). They are
-rhythm inside one element's cycle, so no superpattern is claimed; test_audio_2's
-D4 superpattern qualified only because each of its sub-spans was already a drawn
-pattern.
-6. **The remainder is dropped however large it is.** The pad is still sounding
-at the end of the file, but its fifth segment closes at 60.65 s and the
-remaining 6.05 s is two thirds of a segment, so it sits outside the region. A
-large remainder is not evidence that the loop is wrong: shortening the loop to
-swallow the tail would break five clean repetitions, and running the region past
-the last complete segment would break the no-partial-segment rule every other
-row obeys.
-7. **Starts and grids are measured, not chosen.** Neither region starts on a
-loop point, a bar, or the other row's grid: the riff starts a fraction of a loop
-before its first note and the pad starts at its entry. Both rows are drawn over
-the same single waveform so that this shows: their rectangles cover different
-halves of the timeline, no dashed vertical is shared, and that is the expected
-result rather than a misalignment.
+1. **A note that keeps its place is a tracked element.** The first phrase plays
+   four low notes on one instrument in a fixed order and rhythm, and each note
+   returns to its own place in the bar. Four elements, so four patterns, each on
+   its own row with the same region and the same segments. Pitch separates them,
+   as in test_audio_2, and a pattern shared exactly by another element is still
+   two patterns, as with test_audio_1's kick and cymbal. The figure itself is
+   not an element: nothing inside it repeats at an interval shorter than the
+   bar, so the bar is what each note's own return measures.
+2. **The second phrase is one pattern for the opposite reason.** Its first note
+   is the only element that holds the same place in every repetition; the notes
+   after it land elsewhere from one measure to the next. An element that never
+   returns to its position cannot repeat in the same place, so those notes yield
+   no pattern even though they are plainly heard. This is the contrast the file
+   exists to show: four notes at fixed places give four patterns, one note at a
+   fixed place gives one, and the count comes from how many elements keep a
+   position rather than how many notes are present.
+3. **An element without an attack is still an element.** Nothing strikes the
+   pad's note: it is a held F#2 that swells, so no transient marks the start of
+   its measures. Its identity is its pitch plus the shape of its cycle, which
+   the definition's "specific pitch that occurs in the same position in the
+   segment" already covers; making an onset a precondition would hide the only
+   element this phrase tracks. Where there is no attack, match the cycle against
+   itself one loop later instead of searching for a strike.
+4. **Two phrases.** The riff's last complete segment closes at 15.25 s and the
+   pad's region opens at 15.65 s, so no segment is shared and the file holds two
+   phrases. Phrase membership comes from a full shared segment, never from the
+   recording being continuous; the 0.4 s between the regions belongs to neither.
+5. **Each pattern measures its own loop.** The two loop lengths, 3.01 and 3.00,
+   are close but measured separately, and nothing requires them to agree to the
+   millisecond or to be multiples of each other. Shared geometry is a property
+   of the elements, not of the algorithm: the four riff rows share one grid only
+   because they are four notes of one figure, so the grid is measured once from
+   the figure and used four times.
+6. **A slower period in the untracked content does not lengthen a pattern.**
+   The notes around the pad come and go over spans of several measures, so that
+   texture is coarser than the bar the pad's note returns on. A pattern's loop
+   is the shortest interval at which its own element lands in the same place; a
+   longer period followed only by other content is not a new element, so it
+   neither extends the segment nor counts as a superpattern, which would need
+   smaller patterns nested inside, and there are none.
+7. **Starts and remainders are measured.** 0.19 sits ahead of the riff's first
+   note, keeping that attack inside the first segment, and 15.65 is the pad's
+   entry. The pad still sounds at the end of the file, but its fifteenth segment
+   closes at 60.65 s, so the remaining 6.05 s, two more measures, sits outside
+   the region: a pattern ends at its last complete segment however much tail is
+   left.
