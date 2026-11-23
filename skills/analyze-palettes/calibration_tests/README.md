@@ -151,8 +151,7 @@ measured gap.
    pad's note; it is a held F#2 that swells, so no transient marks the start of
    its measures. Its identity is its pitch plus the shape of its cycle, which
    the definition's "specific pitch that occurs in the same position in the
-   segment" already covers; making an onset a precondition would hide the only
-   element this phrase tracks. Where there is no attack, match the cycle against
+   segment" already covers; an onset is not a precondition. Where there is no attack, match the cycle against
    itself one loop later instead of searching for a strike.
 4. **Two phrases.** The riff's last complete segment closes at 15.25 s and the
    pad's region opens at 15.65 s, so no segment is shared and the file holds two
