@@ -10,6 +10,7 @@ Usage:
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -130,7 +131,7 @@ def sound_class(base, p):
     return ('sound', p['sound']) if p.get('sound') is not None else None
 
 
-def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
+def build_song(report_dir, reports, spec, master_name='finished_song.wav', cache_path=None):
     metas = []
     for r in reports:
         base = os.path.splitext(os.path.basename(r['file']))[0]
@@ -189,8 +190,23 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     ends = [int(round(start_s[i] * sr)) + len(p['segments']) * int(round(p['length'] * sr))
             for i, (_, p) in enumerate(pats)]
 
+    cache_path = cache_path or os.path.join(
+        os.path.dirname(os.path.abspath(report_dir)), 'rating-cache.json')
+    fingerprint = hashlib.sha1(json.dumps(
+        [[base, p['id'], p['start'], p['length'], len(p['segments']), targets[i]]
+         for i, (base, p) in enumerate(pats)]).encode()).hexdigest()
+    cache = {}
+    if os.path.exists(cache_path):
+        with open(cache_path) as handle:
+            saved = json.load(handle)
+        if saved.get('fingerprint') in (None, fingerprint):
+            cache = saved.get('ratings', saved)
+
     def proposed_rating(members):
         """Rate the proposed song: every stem in one pass, one shared history."""
+        key = ','.join(str(k) for k in sorted(members))
+        if key in cache:
+            return cache[key]
         rater = rater_executable()
         total = max(ends[k] for k in members)
         tmp = tempfile.mkdtemp()
@@ -206,9 +222,14 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             run = subprocess.run([rater] + paths, capture_output=True, text=True)
             if run.returncode != 0:
                 raise RuntimeError('song rating failed: %s' % run.stderr.strip())
-            return float(run.stdout.strip().splitlines()[-1])
+            value = float(run.stdout.strip().splitlines()[-1])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        cache[key] = value
+        with open(cache_path + '.tmp', 'w') as handle:
+            json.dump({'fingerprint': fingerprint, 'ratings': cache}, handle)
+        os.replace(cache_path + '.tmp', cache_path)
+        return value
 
     keep = []
     for i, (base, p) in enumerate(pats):
@@ -348,6 +369,8 @@ def main():
     ap.add_argument('--report-dir', required=True, help='directory holding the built report')
     ap.add_argument('--archive', default=None,
                     help='zip the palettes and passes were extracted from; the master is named after it')
+    ap.add_argument('--cache', default=None,
+                    help='rating cache; defaults to rating-cache.json beside the report folder')
     args = ap.parse_args()
 
     with open(args.spec) as f:
@@ -355,7 +378,7 @@ def main():
     reports = spec.get('reports') or [spec]
     master = (os.path.splitext(os.path.basename(args.archive))[0] + '.wav'
               if args.archive else 'finished_song.wav')
-    res = build_song(args.report_dir, reports, spec, master)
+    res = build_song(args.report_dir, reports, spec, master, args.cache)
     print('song   %.2f s  %d bars  peak %.1f dBFS  rms %.1f dBFS  clipped %d'
           % (res['duration'], res['bars'], res['peak_db'], res['rms_db'], res['clipped']))
     print('stems  %d  sum delta %d LSB  gains %s'

@@ -471,6 +471,34 @@ Song-level checks:
 - [ ] A deep zoom loads a finer `a*.js` level and Reset Zoom restores the view.
 - [ ] Click-to-seek starts playback; mute toggles one stem.
 
+### 3a. Long songs and interruptions
+
+Overlap rating is the slow part of the build: each candidate is a fresh rating
+of every stem in the song so far, so one pair costs two passes over the whole
+song and a long archive takes hours. The builder saves every rating as it
+completes in `rating-cache.json` beside the report folder, keyed by the set of
+stems it rated and stamped with a fingerprint of the spec. A killed run loses
+only the rating in flight, and a genuinely rebuilt spec starts a fresh cache by
+itself, so never delete the cache to "start over".
+
+Start the build through `song_builder.sh`, which restarts the builder whenever
+it exits non-zero, rather than calling `song_builder.py` directly:
+
+```bash
+skills/analyze-palettes/song_builder.sh artifacts/<batch>/song.log \
+  --spec report-spec.json --report-dir artifacts/<batch>/pattern_reports \
+  --archive 'downloads/[2026-11-12-19-7-9].zip'
+```
+
+Run that detached; the rating takes far longer than one command's lifetime. If
+the session itself is killed the restarts go with it: relaunch the same command
+and it resumes from the cache, replaying the earlier overlap decisions in
+seconds. Follow progress by the `overlap` lines in `song.log` and by the cache
+growing, and treat several minutes without a new rating as a rating in flight
+on a long song, not a stall. `--cache` moves the cache; it defaults to
+`rating-cache.json` beside the report folder, so the batch folder holds the
+master, the reports and the cache, and the cache is not packaged with them.
+
 ## 4. Memory-safe waveform design
 
 Do **not** inline the whole PCM or a dense waveform in the HTML. The report
