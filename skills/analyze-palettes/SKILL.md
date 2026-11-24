@@ -25,17 +25,22 @@ measured, what is estimated, and where the uncertainty is.
   loop anchor.
 - **Segment**: a single iteration of a repeating pattern. All segments within
   the same pattern have the same length.
-- **Pattern**: one contiguous repeated region of at least three segments. A
-  pattern begins where the audio repeats; it is not required to begin on a pass
-  loop point.
-- **Pattern region**: the span of audio the loop was measured over, from its
-  start to the end of its last complete segment. This is the unit the song uses,
-  whole.
+- **Tracked element**: an onset or a pitch that returns to the same place in the
+  segment. The same sample in two different places in the segment is two
+  elements, and therefore two patterns.
+- **Pattern**: one tracked element's run of at least three contiguous segments,
+  from its measured start to the end of its last complete segment. One element
+  may have non-contiguous patterns when something interrupts it.
+- **Superpattern**: a pattern of patterns. It needs no separate measurement: it
+  is a multiple of patterns already found.
+- **Phrase**: the full extent of the patterns that share a loop and overlap by
+  at least one segment. **This is the unit the rest of the skill works in**: the
+  report draws one row per phrase and the song makes one stem per phrase.
 - **Loop anchor**: the assigned pass's loop point. The song aligns every
-  pattern's loop anchor to one common song time.
-- **Lead-in**: `pattern start - pass loop point`. It may be negative. The
-  earliest lead-in across every pattern in every palette is shifted to 0, and
-  the shifted value is the pattern's entry in the song, in seconds.
+  phrase's loop anchor to one common song time.
+- **Lead-in**: `phrase start - pass loop point`. It may be negative. The
+  earliest lead-in across every phrase in every palette is shifted to 0, and
+  the shifted value is the phrase's entry in the song, in seconds.
 - **Song**: one master assembled from the patterns of every palette in the
   archive. Every palette contributes all of its patterns, once each. An archive
   gets one song, never one song per palette.
@@ -44,6 +49,7 @@ Patterns are independent of each other. A file may hold one loop length in every
 region, or a different length in each; both are normal, and neither is imposed
 by the tool. Uniform segment length is required only *within* a pattern, never
 across patterns or across the file. Measure each region on its own terms.
+Phrases inherit that: each phrase has one loop and one uniform grid.
 
 `calibration_tests/test_audio_1.png` illustrates this vocabulary
 
@@ -124,87 +130,85 @@ by fitting integer multiples of a candidate bar to all pass durations. A first
 pass may be a partial pickup and a last pass a short tail; both are normal and
 are not pattern regions.
 
-## 1. Find patterns in the sections
+## 1. Extract phrases
 
-Run the bundled helper:
+Run the bundled extractor:
 
 ```bash
-python3 analyze_audio.py input.wav [more.wav ...] --json analysis.json
+python3 analyze_audio.py input.wav [more.wav ...] \
+  --json analysis.json --spec report-spec.json
 ```
 
-It computes, independently of the project:
+It works from the audio alone:
 
-- the pass table, an estimated bar, and runs of equal-length passes;
+- takes, as stretches above the silence floor with a held envelope, so sparse
+  percussion is not cut between hits;
 - a 64-band log-mel spectrogram (STFT 2048, hop 1024, about 43 fps);
-- a positive spectral-flux onset envelope and band envelopes;
-- silence-delimited sections using 0.1 s RMS, −50 dB, 0.5 s minimum silence;
-- a low-rate self-similarity novelty curve;
-- autocorrelation and lag-similarity peaks per section;
-- a suggested loop length per section, with mean similarity and confidence;
-- each section's assigned pass and raw lead-in.
+- attacks, with band levels, a pitch class and a coarse label;
+- a loop length per stretch, from how well the audio repeats one loop later,
+  refined to 1 ms;
+- where the loop changes inside a long take, by measuring 16 s windows;
+- a tracked element for every place in the segment an onset returns to, and its
+  patterns as runs of at least three contiguous segments;
+- one phrase per stretch that holds one loop.
 
-The helper prints candidates; verify them rather than accepting them blindly.
+`--spec` writes the report spec straight from the phrases. Read the printed
+table against the audio rather than accepting it blindly.
 
-### 1a. Regions come from the sections
+### 1a. A phrase is the extent of its patterns
 
-Start from the silence-delimited sections: they are the composer's own
-divisions, and a section is normally one pattern. Report one pattern per
-section, with the region covering the section from just after the gap to the end
-of its last complete segment. Do not carve a section down to the few bars that
-repeat most exactly: a pattern is what a listener hears looping through the
-whole section.
+A take is the composer's own division, and one phrase normally spans it. The
+extractor finds the elements that keep their place in the segment, follows each
+as far as it runs, and reports the extent those runs cover: a phrase starts
+where its earliest pattern starts and ends at its last complete segment. Do not
+carve a take down to the bars that repeat most exactly; a phrase is what a
+listener hears looping through it.
 
-Split a long section only where the loop itself changes — a new bar length, a
-new harmonic rhythm, an obvious change of density. Two or three sub-regions of
-sixty to a hundred seconds each are typical for a five-minute section. Do not
-leave a stretch of a section unrepresented when it loops at its own length.
-Leave a little margin around fades; do not start a pattern in the middle of a
-tail. A pattern start is a measured musical start, not a pass loop point.
+A take that changes loop is reported as more than one phrase, split where the
+windowed measurement changes. A short tail that loops at its own length becomes
+its own phrase instead of disappearing into the take before it. Do not leave a
+stretch of a take unrepresented when it loops at its own length. A phrase start
+is a measured musical start, not a pass loop point.
 
-### 1b. The loop is an integer number of bars
+### 1b. The loop is where a tracked element returns
 
-For each region:
+For each stretch:
 
-1. Estimate the base bar from onset spacing or the ACF. Confirm it against the
-   pass-duration estimate; measure it per region.
-2. Test integer bar lengths that leave at least three segments. Include 1, 2, 3,
-   4 and 8 bars where they fit.
-3. Score each candidate by **mean lag similarity over the whole region**: the
-   average, across every frame of the region, of the similarity between a frame
-   and the frame one loop later.
-4. Prefer the shortest candidate that explains the whole region. A stronger
-   score at 2× or 4× a shorter loop is usually the same loop with a layer on
-   top — but take the longer one when the region's high-level content needs it.
-5. Confirm it is a **peak**: the chosen lag must score clearly above lags that
-   are not near-integer bar multiples. A held pad or a fade tail matches at
-   every lag, so a high score alone is not evidence.
+1. Score candidate lengths from 0.5 s to a third of the stretch by **mean lag
+   similarity**: the average, over the stretch, of the similarity between a
+   frame and the frame one loop later. Fractional frame positions are
+   interpolated, so the measurement is not limited to whole frames.
+2. Take the local peaks and prefer the **shortest** one within 0.05 of the best:
+   a stronger match at 2× or 4× is the same loop with another layer on top. The
+   refinement then runs at 1 ms, so the loop is measured, not rounded to a frame
+   or a bar.
+3. Confirm it against the attacks: at the chosen length, the attacks of one
+   element must keep one phase. A stretch whose attacks scatter at every
+   candidate is a texture, not a pattern.
+4. A loop need not be an integer number of bars. Report it in bars as well when
+   a bar is known, but never round it to one.
 
-Do **not** gate candidates on the fraction of frames that exceed a strict
-similarity. Real loop regions score about 0.55–0.81 on the mean, and a
-frame-wise gate rejects most of them while ranking steady textures above the
-actual music.
+### 1c. Passes place the phrases around one song anchor
 
-### 1c. Passes place the patterns around one song anchor
+Passes do not cut or snap phrases:
 
-Passes do not cut or snap patterns:
-
-1. For each pattern, assign the pass it overlaps most in time. On a tie, use the
-   earlier pass. The assigned pass's loop point is the pattern's **loop anchor**.
-2. Compute `lead = pattern.start - pass.loop_point`.
-3. Across every pattern in every palette, shift all leads by `-min(lead)` and
-   clamp at 0. That shifted value is the pattern's **entry** in seconds.
-4. Every pattern's loop anchor lands at the same song time, `-min(lead)`. This
+1. For each phrase, assign the pass it overlaps most in time. On a tie, use the
+   earlier pass. The assigned pass's loop point is the phrase's **loop anchor**.
+2. Compute `lead = phrase.start - pass.loop_point`.
+3. Across every phrase in every palette, shift all leads by `-min(lead)` and
+   clamp at 0. That shifted value is the phrase's **entry** in seconds.
+4. Every phrase's loop anchor lands at the same song time, `-min(lead)`. This
    is the song anchor (`arr.js`'s `anchor` and the white line in `song.html`).
 5. The song starts each stem at its entry. A negative raw lead is normal: it
-   means the pattern starts before its pass's loop point. The pattern with the
+   means the phrase starts before its pass's loop point. The phrase with the
    smallest lead defines the song's zero.
 6. After overlap rating has dropped its losers, re-zero on the smallest **kept**
-   lead and move the anchor earlier by the same amount. If the dropped pattern
+   lead and move the anchor earlier by the same amount. If the dropped phrase
    held entry 0 the song would otherwise open with silence. `song_builder.py`
    trims this before it writes the stems, so the master, the stems, the page
    timeline and the bar count all start at the first kept audio.
 
-Do not round the entry to a bar, and do not move a pattern start onto a loop
+Do not round the entry to a bar, and do not move a phrase start onto a loop
 point to make the lead zero. The lead is whatever the measured start and the
 assigned pass produce. In the worked example the raw leads run from −45.2 s to
 −37.3 s, so the song entries are 0–42.1 s, not bar multiples, and all six loop
@@ -212,39 +216,36 @@ anchors land at 79.396 s.
 
 ### 1d. Checks
 
-1. **Section boundaries.** Prefer actual silence gaps. If the file is
-   continuous, use novelty peaks and clear changes in timbre/level.
-2. **Fundamental vs harmonics.** A strong peak at 2L, 3L or 4L is often a
-   harmonic of the loop, not the loop. Compare onset ACF, mel lag similarity and
-   band ACF. Prefer the shortest plausible peak consistent with the structure.
-3. **Nested periods.** A low band may repeat at half the full loop while a high
-   layer repeats only at the full loop. Choose the full loop when the region's
-   high-level content requires it.
-4. **Cycle count.** Check that `(end - start) / loop_length` is close to an
-   integer. A remainder is normal at the end and is excluded: the pattern ends
-   at the last full loop. A region of fewer than three full segments is not a
-   pattern.
-5. **Bar multiple.** Express the loop as an integer number of bars.
+1. **Take boundaries.** Prefer real silence. If the file is continuous, the
+   windowed loop measurement is what separates one phrase from the next.
+2. **Shortest plausible loop.** A strong peak at 2L, 3L or 4L is usually the
+   same loop with another layer, not a longer loop.
+3. **Half loops.** A low band may repeat at half the phrase's loop while a high
+   layer repeats only at the full one. The phrase keeps one loop; prefer the
+   shortest at which an element keeps its place.
+4. **Cycle count.** `(end - start) / loop` must be a whole number of at least
+   three. A remainder is normal at the end of a take and is excluded.
+5. **Tracked elements.** Every pattern listed for a phrase must have at least
+   three contiguous segments. A single stray hit is not a pattern.
 6. **Pass placement.** Confirm the assigned pass is the one with the largest
    temporal overlap, and record the raw lead and the shifted entry.
-7. **Confidence.** Record whether the loop is clear, plausible, or ambiguous,
-   and record the mean similarity. A useful tolerance is a few tens of
-   milliseconds for the loop estimate.
+7. **Confidence.** Record the loop's mean similarity. A useful tolerance is a
+   few tens of milliseconds for the loop estimate.
 
 Write down a table before building anything:
 
-| File | Pattern | Pass | Start (s) | End (s) | Loop (s) | Bars | Lead (s) | Entry (s) | Segments |
+| File | Phrase | Pass | Start (s) | End (s) | Loop (s) | Bars | Lead (s) | Entry (s) | Segments |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | palette_2026-11-10 | 1 | 6 | 1.00 | 60.10 | 3.652 | 2 | −45.194 | 34.201 | 16 |
 
 ## 2. Build the report specification
 
-Create a JSON spec. Paths in `file` are relative to `--src` unless absolute.
-`start` is the measured pattern start; `end` is a search bound that the builder
-truncates to the last complete segment. Pass the section's `bound` from the
-analysis helper as `end`, not its already-truncated `end`: rounding those to
-milliseconds can land a hair short of the last segment boundary and silently
-cost the region its final segment through `int((end - start) / length)`.
+`analyze_audio.py --spec` writes it: one `patterns` entry per phrase, with the
+phrase's measured start, its loop length and a search bound as `end`. Paths in
+`file` are relative to `--src` unless absolute. The builder truncates `end` to
+the last complete segment, so keep it a hair past that boundary: rounding it to
+milliseconds can land just short and silently cost the phrase a segment through
+`int((end - start) / length)`.
 
 ```json
 {
@@ -344,13 +345,13 @@ files) and kept literal on disk.
 The builder validates the resident coarse min/max data and the first fine
 chunk against the PCM before finishing.
 
-## 3. Build the song from the patterns
+## 3. Build the song from the phrases
 
-A song is layered from the same patterns the reports show, and every pattern
-used in it is used in its entirety. A stem is the pattern's whole measured
-region, first sample to last, placed once: no segment is dropped, no portion is
-silenced, gated or faded out early, and the region is never tiled or looped to
-fill more time.
+A song is layered from the same phrases the reports show, and every phrase used
+in it is used in its entirety: one spec entry, one report row, one stem. A stem
+is the phrase's whole measured region, first sample to last, placed once: no
+segment is dropped, no portion is silenced, gated or faded out early, and the
+region is never tiled or looped to fill more time.
 
 One song is built per archive, never per palette. If the archive holds several
 palettes, every pattern of every palette becomes a stem in the same master; do
@@ -642,9 +643,12 @@ its region.
   Do not combine their reports or stems. A zero-pattern archive has no song page.
 - Only direct, non-trashed children of My Drive/[palettes] are inputs. Never
   process trash, shortcuts, other folders, or duplicate copies.
-- Passes place patterns; they do not define them. Do not force a pattern start
+- Passes place phrases; they do not define them. Do not force a phrase start
   onto a pass loop point. Doing so makes every lead-in zero and destroys the
   measured placement.
+- Clicking segments gives patterns, not phrases. A phrase is the extent of the
+  patterns that share a loop, so it can hold several tracked elements at
+  different places in the segment; the report row and the stem are the phrase.
 - Do not round the lead-in to bars. The song builder starts stems at exact
   anchor-relative seconds.
 - A negative raw lead-in is normal. Shift all leads by the global minimum
