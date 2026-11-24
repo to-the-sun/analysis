@@ -64,11 +64,26 @@ def transience(x, sr):
     return np.maximum(np.diff(env, prepend=env[0]), 0.0).astype(np.float32), hop / sr
 
 
-def resample_env(env, step_seconds, frames):
+def resample_env(env, step_seconds, frames, offset=0.0):
     if not len(env):
         return np.zeros(frames, np.float32)
-    src = np.arange(len(env)) * step_seconds
+    src = np.arange(len(env)) * step_seconds + offset
     return np.interp(np.arange(frames) / ENV_RATE, src, env, left=0.0, right=0.0).astype(np.float32)
+
+
+def read_leads(stems_dir):
+    path = os.path.join(os.path.dirname(stems_dir), 'song.json')
+    if not os.path.isfile(path):
+        return {}, path
+    with open(path) as f:
+        raw = json.load(f).get('stems') or {}
+    leads = {}
+    for name, value in raw.items():
+        try:
+            leads[os.path.basename(name).lower()] = max(0.0, float(value))
+        except (TypeError, ValueError):
+            pass
+    return leads, path
 
 
 def minmax_bins(pcm, step):
@@ -110,8 +125,9 @@ def score_color(score):
 
 def card(stem, i):
     pct = 'no transients' if stem['score'] is None else f"{stem['score'] * 100:.1f}%"
+    lead = f" &middot; lead-in {stem['lead']:.2f} s" if stem['lead'] else ''
     meta = (f"{fmt(stem['duration'])} &middot; {stem['sampleRate']} Hz &middot; "
-            f"{'mono' if stem['channels'] == 1 else str(stem['channels']) + ' ch'}")
+            f"{'mono' if stem['channels'] == 1 else str(stem['channels']) + ' ch'}{lead}")
     return (
         f'<section class="card">'
         f'<div class="head"><span class="name">{html.escape(stem["name"])}</span>'
@@ -165,13 +181,12 @@ for (let i = 0; i < STEMS.length; i++) {
     s.others[k] = Math.max(0, TOTAL[k] - (k < s.own.length ? s.own[k] : 0));
   }
   let m = 1;
-  const last = Math.min(TOTAL.length - 1, Math.ceil(s.duration * RATE));
-  for (let k = 0; k <= last; k++) {
+  for (let k = 0; k < TOTAL.length; k++) {
     m = Math.max(m, TOTAL[k], s.own[k] || 0);
   }
   s.scale = Math.min(m, MAX_TOTAL) || 1;
   s.view0 = 0;
-  s.view1 = s.duration;
+  s.view1 = META.songDuration;
   s.hist = [];
   s.canvas = document.getElementById('canvas' + i);
   s.ctx = s.canvas.getContext('2d');
@@ -302,8 +317,8 @@ function streamRange(st, li, a, b) {
 
 function sampleRange(st) {
   const sr = st.sampleRate, n = st.totalSamples;
-  const a = Math.max(0, Math.floor(st.view0 * sr));
-  const b = Math.min(n - 1, Math.ceil(st.view1 * sr));
+  const a = Math.max(0, Math.floor((st.view0 - st.lead) * sr));
+  const b = Math.min(n - 1, Math.ceil((st.view1 - st.lead) * sr));
   return [a, Math.max(a, b)];
 }
 
@@ -311,20 +326,22 @@ function xToTime(st, x, w) {
   return st.view0 + (x / w) * (st.view1 - st.view0);
 }
 
-function envPoints(pick, len, t0, t1, w, mapY) {
+function envPoints(pick, len, t0, t1, w, mapY, off) {
   const pts = [];
   if (!len || t1 <= t0) return pts;
   const span = t1 - t0;
-  const f0 = Math.max(0, t0 * RATE);
-  const f1 = Math.min(len - 1, t1 * RATE);
+  const f0 = Math.max(0, Math.floor((t0 - off) * RATE));
+  const f1 = Math.min(len - 1, Math.ceil((t1 - off) * RATE));
   if (f1 < f0) return pts;
+  const xOf = k => ((k / RATE + off) - t0) / span * w;
   const ppf = (f1 - f0) / Math.max(1, w);
   if (ppf >= 2) {
     for (let px = 0; px <= w; px++) {
-      const a = Math.min(len - 1, Math.floor(f0 + (px / w) * (f1 - f0)));
-      const b = Math.min(len - 1, Math.max(a, Math.floor(f0 + ((px + 1) / w) * (f1 - f0))));
+      const a = Math.max(f0, Math.floor((t0 - off + (px / w) * span) * RATE));
+      if (a > f1) break;
+      const b = Math.min(f1, Math.floor((t0 - off + ((px + 1) / w) * span) * RATE));
       let v = 0;
-      for (let k = a; k <= b; k++) {
+      for (let k = a; k <= Math.max(a, b); k++) {
         const q = pick(k);
         if (q > v) v = q;
       }
@@ -332,8 +349,7 @@ function envPoints(pick, len, t0, t1, w, mapY) {
     }
   } else {
     for (let k = Math.floor(f0); k <= Math.ceil(f1); k++) {
-      const x = ((k / RATE) - t0) / span * w;
-      pts.push([x, mapY(pick(k))]);
+      pts.push([xOf(k), mapY(pick(k))]);
     }
   }
   return pts;
@@ -358,7 +374,7 @@ function paint(ctx, pts, baseY, fill, stroke) {
 }
 
 function updateView(st) {
-  const x = st.view1 > st.view0 ? st.duration / (st.view1 - st.view0) : 1;
+  const x = st.view1 > st.view0 ? META.songDuration / (st.view1 - st.view0) : 1;
   st.viewEl.textContent = fmt(st.view0) + ' \u2013 ' + fmt(st.view1) + '  (x' + x.toFixed(1) + ')';
 }
 
@@ -392,11 +408,14 @@ function draw(st) {
 
   const [s1, s2] = sampleRange(st);
   const level = usableLevel(st, s1, s2, w);
-  const visible = Math.max(1, s2 - s1 + 1);
+  const sr = st.sampleRate, n = st.totalSamples, span = st.view1 - st.view0;
   ctx.fillStyle = 'rgba(150,158,178,0.34)';
   for (let px = 0; px < w; px++) {
-    const a = s1 + Math.floor((px / w) * visible);
-    const b = Math.min(s2, s1 + Math.floor(((px + 1) / w) * visible));
+    let a = Math.floor((st.view0 + (px / w) * span - st.lead) * sr);
+    let b = Math.ceil((st.view0 + ((px + 1) / w) * span - st.lead) * sr);
+    if (b < 0 || a > n - 1) continue;
+    a = Math.max(0, a);
+    b = Math.min(n - 1, b);
     if (!streamRange(st, level, a, b)) continue;
     const y1 = midY - rangeOut.mx * waveH;
     const y2 = midY - rangeOut.mn * waveH;
@@ -405,9 +424,9 @@ function draw(st) {
 
   const own = st.own, others = st.others;
   const t0 = st.view0, t1 = st.view1;
-  const ownPts = envPoints(k => own[k], own.length, t0, t1, w, mapY);
-  const otherPts = envPoints(k => others[k], others.length, t0, t1, w, mapY);
-  const overlapPts = envPoints(k => Math.min(own[k] || 0, others[k] || 0), TOTAL.length, t0, t1, w, mapY);
+  const ownPts = envPoints(k => own[k], own.length, t0, t1, w, mapY, st.lead);
+  const otherPts = envPoints(k => others[k], others.length, t0, t1, w, mapY, st.lead);
+  const overlapPts = envPoints(k => Math.min(own[k] || 0, others[k] || 0), TOTAL.length, t0, t1, w, mapY, st.lead);
 
   paint(ctx, otherPts, baseY, 'rgba(255,169,77,0.13)', 'rgba(255,169,77,0.85)');
   paint(ctx, ownPts, baseY, 'rgba(77,171,247,0.20)', 'rgba(77,171,247,0.95)');
@@ -436,7 +455,7 @@ function draw(st) {
     ctx.fillText(label, x, h - 3);
   }
 
-  const t = st.audio ? st.audio.currentTime : 0;
+  const t = st.lead + (st.audio ? st.audio.currentTime : 0);
   if (t >= st.view0 && t <= st.view1 && (t > 0 || !st.audio.paused)) {
     const x = (t - st.view0) / (st.view1 - st.view0) * w;
     ctx.strokeStyle = '#ff5252';
@@ -487,8 +506,8 @@ function schedule(st) {
 
 function zoomTo(st, a, b) {
   a = Math.max(0, a);
-  b = Math.min(st.duration, b);
-  if (b - a < Math.min(MIN_SPAN, st.duration)) return;
+  b = Math.min(META.songDuration, b);
+  if (b - a < Math.min(MIN_SPAN, META.songDuration)) return;
   st.hist.push([st.view0, st.view1]);
   st.view0 = a;
   st.view1 = b;
@@ -510,14 +529,14 @@ function zoomOut(st) {
 function resetZoom(st) {
   st.hist = [];
   st.view0 = 0;
-  st.view1 = st.duration;
+  st.view1 = META.songDuration;
   st.hover = null;
   st.tip.style.opacity = '0';
   render(st);
 }
 
 function seekAndPlay(st, t) {
-  t = Math.max(0, Math.min(st.duration, t));
+  t = Math.max(0, Math.min(st.duration, t - st.lead));
   const go = () => {
     try { st.audio.currentTime = t; } catch (e) {}
     draw(st);
@@ -561,7 +580,7 @@ function attach(st) {
     const own = k >= 0 && k < st.own.length ? st.own[k] / 32767 : 0;
     const other = k >= 0 && k < st.others.length ? st.others[k] / 32767 : 0;
     st.tip.innerHTML = 'Time ' + fmt(t) + ' &middot; sample ' +
-      Math.round(Math.min(t, st.duration) * st.sampleRate) +
+      Math.round(Math.max(0, Math.min(t - st.lead, st.duration)) * st.sampleRate) +
       ' &middot; own ' + own.toFixed(3) + ' &middot; others ' + other.toFixed(3);
     st.tip.style.opacity = '1';
     draw(st);
@@ -646,7 +665,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <span><span class="swatch" style="background:#51cf66"></span>Overlap</span>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
   </div>
-  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area. Transience is the positive derivative of the peak-amplitude envelope. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Reset Zoom restores the whole stem.</div>
+  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area. Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Reset Zoom restores the whole song.</div>
 </header>
 <main>
 __CARDS__
@@ -662,10 +681,13 @@ __REPORT_JS__
 
 
 def build(stems_dir, out_dir):
+    leads, leads_path = read_leads(stems_dir)
+    out_root = os.path.abspath(out_dir) + os.sep
     files = sorted(
         (os.path.join(root, f)
          for root, _, names in os.walk(stems_dir)
-         for f in names if f.lower().endswith('.wav')),
+         for f in names if f.lower().endswith('.wav')
+         and not os.path.abspath(os.path.join(root, f)).startswith(out_root)),
         key=lambda p: natural(os.path.basename(p)))
     if not files:
         raise SystemExit('No WAV files in %s' % stems_dir)
@@ -687,12 +709,14 @@ def build(stems_dir, out_dir):
             'env': env,
             'envStep': step_seconds,
             'duration': len(x) / sr if sr else 0.0,
+            'lead': leads.get(os.path.basename(path).lower(), 0.0),
         })
-        print('Read %s (%.2fs, %d Hz)' % (stems[-1]['name'], stems[-1]['duration'], sr))
+        print('Read %s (%.2fs, %d Hz, lead-in %.3fs)'
+              % (stems[-1]['name'], stems[-1]['duration'], sr, stems[-1]['lead']))
 
-    duration = max(s['duration'] for s in stems)
+    duration = max(s['lead'] + s['duration'] for s in stems)
     frames = int(np.ceil(duration * ENV_RATE)) + 1
-    matrix = np.stack([resample_env(s['env'], s['envStep'], frames) for s in stems])
+    matrix = np.stack([resample_env(s['env'], s['envStep'], frames, s['lead']) for s in stems])
     total = matrix.sum(axis=0)
     own_area = matrix.sum(axis=1)
     overlap = np.minimum(matrix, np.maximum(total[None, :] - matrix, 0.0)).sum(axis=1)
@@ -720,6 +744,7 @@ def build(stems_dir, out_dir):
             'channels': int(s['channels']),
             'totalSamples': int(len(s['pcm'])),
             'duration': round(s['duration'], 6),
+            'lead': round(s['lead'], 6),
             'score': None if scores[idx] is None else round(scores[idx], 6),
             'audio': '%s/%d/%s' % (DATA_URL, display, quote(os.path.basename(s['path']))),
             'ownB64': b64_i16(q(matrix[idx])),
@@ -731,6 +756,7 @@ def build(stems_dir, out_dir):
 
     meta = {
         'envRate': ENV_RATE,
+        'songDuration': round(duration, 6),
         'chunkBins': CHUNK_BINS,
         'coarseStep': COARSE_STEP,
         'dataDir': DATA_URL,
@@ -741,13 +767,15 @@ def build(stems_dir, out_dir):
         f.write('window.STEM_REPORT = ' + json.dumps(meta, separators=(',', ':')) + ';\n')
 
     cards = '\n'.join(card(s, i) for i, s in enumerate(meta_stems))
+    leads_line = ('<span><strong>Lead-ins:</strong> %s</span>' % html.escape(os.path.basename(leads_path))
+                  if leads else '')
     meta_line = (
         '<span><strong>Source:</strong> %s</span>'
         '<span><strong>Stems:</strong> %d</span>'
-        '<span><strong>Longest:</strong> %s</span>'
-        '<span><strong>Envelope:</strong> %d Hz, %d ms peak window</span>'
+        '<span><strong>Song:</strong> %s</span>'
+        '<span><strong>Envelope:</strong> %d Hz, %d ms peak window</span>%s'
     ) % (html.escape(os.path.basename(os.path.normpath(stems_dir))), len(stems),
-         fmt(duration), ENV_RATE, round(PEAK_SECONDS * 1000))
+         fmt(duration), ENV_RATE, round(PEAK_SECONDS * 1000), leads_line)
     title = 'Stem Transience Correlation - ' + os.path.basename(os.path.normpath(stems_dir))
     text = (HTML_TEMPLATE
             .replace('__TITLE__', html.escape(title))
