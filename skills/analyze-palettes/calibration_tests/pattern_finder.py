@@ -152,6 +152,29 @@ def harmonic_series(peaks, max_series=3):
     return series, left
 
 
+def fold_series(series, heard, t0, tol=0.02):
+    """Read a series pitched a harmonic too high as the note still ringing.
+
+    A weak fundamental comes out of harmonic_series as a ladder on 2f0 or 3f0.
+    With a confirmed lower note still sounding, the reading belongs to that
+    note; with nothing plausible below it, the ladder stands on its own.
+    """
+    for s in series:
+        best = None
+        for h in heard:
+            if not h[3]:
+                continue                    # never confirmed by its own fundamental
+            k = s['f0'] / h[0]
+            if round(k) not in (2, 3) or abs(k - round(k)) > tol * k:
+                continue
+            if t0 - h[1] > h[2] + 0.25:
+                continue
+            if best is None or k < best[0]:
+                best = (k, h[0])
+        if best:
+            s['f0'] = best[1]
+
+
 def band_energy(freqs, power, lo, hi):
     m = (freqs >= lo) & (freqs < hi)
     return float(power[m].sum())
@@ -195,7 +218,7 @@ def band_decay(f, t, power, lo, hi, t0, floor_ms=12, span=0.5):
 
 
 def components(x, sr, f, t, power, attacks):
-    out = []
+    out, heard = [], []
     for t0 in attacks:
         freqs, mag = spectrum(x, sr, t0)
         if freqs is None or mag.max() <= 0:
@@ -205,15 +228,27 @@ def components(x, sr, f, t, power, attacks):
         if not peaks:
             continue
         series, left = harmonic_series(peaks)
+        heard = [h for h in heard if t0 - h[1] <= h[2] + 1.0]
+        fold_series(series, heard, t0)
         for s in series:
             amps = np.zeros(8)
-            for k, _, a in s['hits']:
-                if k <= 8:
+            for _, fr, a in s['hits']:
+                k = int(round(fr / s['f0']))
+                if 1 <= k <= 8:
                     amps[k - 1] += a
             amps /= (amps.max() + 1e-20)
+            decay = band_decay(f, t, power, s['f0'] * 0.9, s['f0'] * 4.05, t0)
             out.append({'kind': 'pitched', 't': t0, 'f0': s['f0'],
-                        'timbre': amps, 'decay': band_decay(f, t, power, s['f0'] * 0.9, s['f0'] * 4.05, t0),
-                        'amp': s['amp']})
+                        'timbre': amps, 'decay': decay, 'amp': s['amp']})
+            top = max(a for _, _, a in s['hits'])
+            sure = any(abs(fr - s['f0']) <= 0.03 * s['f0'] and a >= 0.5 * top
+                       for fr, a in peaks)
+            held = next((h for h in heard if cents(h[0], s['f0']) <= PITCH_TOL), None)
+            if held:
+                held[1], held[2] = t0, decay
+                held[3] = held[3] or sure
+            else:
+                heard.append([s['f0'], t0, decay, sure])
         mask = np.ones(len(freqs), bool)
         for p in left:
             if p[2]:
