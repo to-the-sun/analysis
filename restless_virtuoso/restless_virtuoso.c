@@ -2222,6 +2222,10 @@ static void rating_poll(void)
         ratingSound = g.soundNumber;
         if (ratingThread) rating_request(ratingRequestedMode, ratingRequestedFolder, g.soundNumber);
         recording_stop(1);
+        /* The rating that ended the take belongs to the sound before it, so the new one
+           waits for a score of its own instead of starting a take that is at once dropped. */
+        ratingValue = 0.0;
+        ratingBurst = 0.0;
     }
 
     if (playlistMode) {
