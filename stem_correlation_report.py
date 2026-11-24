@@ -125,6 +125,7 @@ def score_color(score):
 
 def card(stem, i):
     pct = 'no transients' if stem['score'] is None else f"{stem['score'] * 100:.1f}%"
+    ratio = '' if stem['score'] is None else f"<span class=\"ratio\">{stem['score']:.4f}</span>"
     lead = f" &middot; lead-in {stem['lead']:.2f} s" if stem['lead'] else ''
     meta = (f"{fmt(stem['duration'])} &middot; {stem['sampleRate']} Hz &middot; "
             f"{'mono' if stem['channels'] == 1 else str(stem['channels']) + ' ch'}{lead}")
@@ -132,7 +133,7 @@ def card(stem, i):
         f'<section class="card">'
         f'<div class="head"><span class="name">{html.escape(stem["name"])}</span>'
         f'<span class="meta">{meta}</span>'
-        f'<span class="score" style="--sc:{score_color(stem["score"])}">{pct}</span>'
+        f'<span class="score" style="--sc:{score_color(stem["score"])}">{pct}</span>{ratio}'
         f'<span class="view" id="view{i}"></span></div>'
         f'<div class="wrap"><canvas id="canvas{i}"></canvas>'
         f'<div class="tooltip" id="tip{i}"></div></div>'
@@ -422,15 +423,30 @@ function draw(st) {
     ctx.fillRect(px, Math.min(y1, y2), 1, Math.max(1, Math.abs(y2 - y1)));
   }
 
-  const own = st.own, others = st.others;
+  const own = st.own, others = st.others, mean = st.mean || 0;
   const t0 = st.view0, t1 = st.view1;
   const ownPts = envPoints(k => own[k], own.length, t0, t1, w, mapY, st.lead);
-  const otherPts = envPoints(k => others[k], others.length, t0, t1, w, mapY, st.lead);
-  const overlapPts = envPoints(k => Math.min(own[k] || 0, others[k] || 0), TOTAL.length, t0, t1, w, mapY, st.lead);
+  const otherPts = envPoints(k => k / RATE >= st.lead && k / RATE <= st.lead + st.duration ? others[k] : 0,
+    others.length, t0, t1, w, mapY, st.lead);
+  const overlapPts = envPoints(k => (own[k] || 0) > mean ? Math.min(own[k], others[k] || 0) : 0,
+    TOTAL.length, t0, t1, w, mapY, st.lead);
 
   paint(ctx, otherPts, baseY, 'rgba(255,169,77,0.13)', 'rgba(255,169,77,0.5)');
   paint(ctx, ownPts, baseY, 'rgba(77,171,247,0.20)', 'rgba(77,171,247,0.5)');
   paint(ctx, overlapPts, baseY, 'rgba(81,207,102,0.26)', null);
+
+  if (mean > 0) {
+    const my = Math.round(mapY(mean / 32767)) + 0.5;
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, my);
+    ctx.lineTo(w, my);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.strokeStyle = 'rgba(255,255,255,0.30)';
   ctx.lineWidth = 1;
@@ -643,6 +659,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
   .name { font-weight:700; color:#fff; font-size:0.92rem; font-family:monospace; }
   .score { font-family:monospace; font-weight:700; font-size:0.9rem; color:var(--sc); border:1px solid var(--sc); border-radius:999px; padding:1px 9px; }
+  .ratio { font-family:monospace; font-size:0.82rem; color:var(--muted); }
   .view { margin-left:auto; font-size:0.78rem; color:#4caf50; font-family:monospace; font-weight:bold; }
   .wrap { position:relative; width:100%; height:220px; background:#0d0d11; border:1px solid #22222e; border-radius:6px; overflow:hidden; user-select:none; }
   canvas { display:block; width:100%; height:100%; cursor:crosshair; }
@@ -664,8 +681,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <span><span class="swatch" style="background:#ffa94d"></span>All other stems combined</span>
     <span><span class="swatch" style="background:#51cf66"></span>Overlap</span>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
+    <span><span class="swatch" style="border-top:1px dashed #fff"></span>Mean of this stem</span>
   </div>
-  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area. Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Reset Zoom restores the whole song.</div>
+  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area, counting only the parts of the envelope above the stem's own mean (dashed line). Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Reset Zoom restores the whole song.</div>
 </header>
 <main>
 __CARDS__
@@ -718,8 +736,18 @@ def build(stems_dir, out_dir):
     frames = int(np.ceil(duration * ENV_RATE)) + 1
     matrix = np.stack([resample_env(s['env'], s['envStep'], frames, s['lead']) for s in stems])
     total = matrix.sum(axis=0)
-    own_area = matrix.sum(axis=1)
-    overlap = np.minimum(matrix, np.maximum(total[None, :] - matrix, 0.0)).sum(axis=1)
+    means = np.zeros(len(stems))
+    own_area = np.zeros(len(stems))
+    overlap = np.zeros(len(stems))
+    for i, s in enumerate(stems):
+        lo = min(frames, int(round(s['lead'] * ENV_RATE)))
+        seg = matrix[i, lo:min(frames, lo + int(round(s['duration'] * ENV_RATE)))]
+        if not seg.size:
+            continue
+        means[i] = seg.mean()
+        above = seg > means[i]
+        own_area[i] = seg[above].sum()
+        overlap[i] = np.minimum(seg[above], (total[lo:lo + seg.size] - seg)[above]).sum()
     scores = [float(o / a) if a > 0 else None for o, a in zip(overlap, own_area)]
 
     scale = float(max(total.max() if len(total) else 0.0, matrix.max() if matrix.size else 0.0)) or 1.0
@@ -746,6 +774,7 @@ def build(stems_dir, out_dir):
             'duration': round(s['duration'], 6),
             'lead': round(s['lead'], 6),
             'score': None if scores[idx] is None else round(scores[idx], 6),
+            'mean': int(round(means[idx] / scale * 32767.0)),
             'audio': '%s/%d/%s' % (DATA_URL, display, quote(os.path.basename(s['path']))),
             'ownB64': b64_i16(q(matrix[idx])),
             'coarseB64': b64_i16(coarse),
