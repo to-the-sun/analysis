@@ -544,7 +544,7 @@ static volatile LONG playlistRefresh;
 #define MIX_BLOCK 4096
 
 /* Each stem's lead-in lives in song.json, so a take carries no silence of its own: it
-   is cued that far into the loop instead. */
+   is cued that far into the loop instead. A padded build writes it into the file. */
 typedef struct {
     wchar_t name[STEM_NAME];
     double lead;
@@ -552,13 +552,18 @@ typedef struct {
 
 static wchar_t *stemFiles[QUEUE_FILES];
 static ULONGLONG stemWritten[QUEUE_FILES];
-static StemLead stemLeads[QUEUE_FILES];
-static int stemLeadCount;
 
 static void load_stem_leads(void);
 static double stem_lead(const wchar_t *file);
+#ifndef PAD_STEMS
+static StemLead stemLeads[QUEUE_FILES];
+static int stemLeadCount;
 static void set_stem_lead(const wchar_t *file, double lead);
 static void save_stem_leads(void);
+#else
+static void shift_stems(const wchar_t *folder, double seconds);
+static void align_stems(const wchar_t *folder);
+#endif
 static double playlist_length(void);
 static void log_playlist(const char *event, double position);
 static int sound_mode(int number);
@@ -2110,6 +2115,23 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
         log_trace("take was silent; not written\n");
         return;
     }
+
+#ifdef PAD_STEMS
+    /* The lead-in is silence written before the take, and a take that starts before the
+       song's zero carries every other stem back with it. */
+    if (lead < 0.0) {
+        shift_stems(folder, -lead);
+        lead = 0.0;
+    }
+    if (!write_wav(path, first, frames, rate, (drwav_uint64)(lead * (double)rate + 0.5))) return;
+    begin += lead;
+    end += lead;
+
+    log_trace("recorded %ls\n", path);
+    if (shared) prune_stems(folder, path, begin, end);
+    align_stems(folder);
+    if (!shared) spawn_stems(folder);
+#else
     if (!write_wav(path, first, frames, rate, 0)) return;
 
     log_trace("recorded %ls\n", path);
@@ -2130,6 +2152,7 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
     save_stem_leads();
 
     prune_stems(folder, path, begin + lead - lowest, end + lead - lowest);
+#endif
 }
 
 static void recording_stop(int spawn)
@@ -3767,6 +3790,7 @@ static const char *song_field(const char *at, char *key, size_t size)
     return skip_space(at);
 }
 
+#ifndef PAD_STEMS
 static size_t json_span(const char *value)
 {
     const char *at = skip_space(value);
@@ -3802,6 +3826,7 @@ static size_t json_span(const char *value)
     while (*at && *at != ',' && *at != '}' && *at != ']') at++;
     return (size_t)(at - start);
 }
+#endif
 
 static char *read_song_text(wchar_t *path, size_t size)
 {
@@ -3819,6 +3844,7 @@ static char *read_song_text(wchar_t *path, size_t size)
     return text;
 }
 
+#ifndef PAD_STEMS
 static void load_stem_leads(void)
 {
     stemLeadCount = 0;
@@ -3931,6 +3957,128 @@ static void save_stem_leads(void)
     fclose(file);
     free(text);
 }
+
+#else
+
+/* A padded stem carries its lead-in as silence at the top of its file, so it is cued
+   with every other stem at the top of the loop. */
+static void load_stem_leads(void) {}
+
+static double stem_lead(const wchar_t *file)
+{
+    (void)file;
+    return 0.0;
+}
+
+/* Rewrites a stem with silence added before it, or taken from it when seconds is
+   negative. Every stem moves by the same amount, so they stay aligned. */
+static int shift_stem(const wchar_t *path, double seconds)
+{
+    Track track;
+    if (decode_track(&track, path) != 0) return 0;
+
+    drwav_uint64 shift = (drwav_uint64)(fabs(seconds) * (double)track.rate + 0.5);
+    drwav_uint64 silent = seconds > 0.0 ? shift : 0;
+    drwav_uint64 skip = seconds < 0.0 ? (shift < track.frames ? shift : track.frames) : 0;
+
+    drwav_data_format format;
+    memset(&format, 0, sizeof format);
+    format.container = drwav_container_riff;
+    format.format = DR_WAVE_FORMAT_PCM;
+    format.channels = (drwav_uint16)track.channels;
+    format.sampleRate = track.rate;
+    format.bitsPerSample = 16;
+
+    wchar_t temp[1400];
+    drwav wav;
+    drwav_int16 *block = malloc((size_t)TAKE_CHUNK * sizeof *block);
+    if (swprintf(temp, 1400, L"%ls.pad", path) < 0 || !block ||
+        !drwav_init_file_write_w(&wav, temp, &format, NULL)) {
+        log_error("Could not pad '%ls'.\n", path);
+        free(block);
+        free(track.samples);
+        return 0;
+    }
+
+    if (silent) {
+        memset(block, 0, (size_t)TAKE_CHUNK * sizeof *block);
+        for (drwav_uint64 at = 0; at < silent;) {
+            drwav_uint64 count = silent - at < TAKE_CHUNK ? silent - at : TAKE_CHUNK;
+            drwav_write_pcm_frames(&wav, count, block);
+            at += count;
+        }
+    }
+    for (drwav_uint64 at = skip; at < track.frames;) {
+        drwav_uint64 count = track.frames - at < TAKE_CHUNK ? track.frames - at : TAKE_CHUNK;
+        drwav_f32_to_s16(block, track.samples + (size_t)at * track.channels,
+                         (size_t)count * track.channels);
+        drwav_write_pcm_frames(&wav, count, block);
+        at += count;
+    }
+    drwav_uninit(&wav);
+    free(block);
+    free(track.samples);
+
+    if (!MoveFileExW(temp, path, MOVEFILE_REPLACE_EXISTING)) {
+        log_error("Could not replace '%ls' with its padded copy.\n", path);
+        DeleteFileW(temp);
+        return 0;
+    }
+    log_trace("moved %ls by %.3fs\n", path, seconds);
+    return 1;
+}
+
+static void shift_stems(const wchar_t *folder, double seconds)
+{
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !is_audio_name(entry.cFileName)) continue;
+        wchar_t file[1400];
+        if (swprintf(file, 1400, L"%ls\\%ls", folder, entry.cFileName) < 0) continue;
+        shift_stem(file, seconds);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+}
+
+/* The song's zero is where its earliest stem starts, so silence left behind by a stem
+   that has gone is trimmed from the rest. */
+static void align_stems(const wchar_t *folder)
+{
+    double earliest = DBL_MAX;
+
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !is_audio_name(entry.cFileName)) continue;
+        wchar_t file[1400];
+        if (swprintf(file, 1400, L"%ls\\%ls", folder, entry.cFileName) < 0) continue;
+
+        double begin, end;
+        if (file_span(file, &begin, &end) && begin < earliest) earliest = begin;
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+
+    if (earliest > 0.0) shift_stems(folder, -earliest);
+}
+
+#endif
 
 /* The sounds are keyed by their number and written in that order, so a number names the
    same sound in every take. A drum sound carries the seed that draws its set. */
@@ -4102,8 +4250,10 @@ static void save_song(void)
     if (!songLive || !songReady || !soundList || song_path(path, sizeof path / sizeof *path) != 0) return;
 
     char *existing = read_song_text(path, sizeof path / sizeof *path);
+#ifndef PAD_STEMS
     const char *leads = existing ? json_value(existing, "stems") : NULL;
     size_t leadsLength = leads ? json_span(leads) : 0;
+#endif
 
     FILE *file = _wfopen(path, L"wb");
     if (!file) {
@@ -4130,10 +4280,12 @@ static void save_song(void)
         fprintf(file, ", \"sound\": %d }", soundList->last[i]);
     }
     fprintf(file, "%s]", instruments ? "\n  " : "");
+#ifndef PAD_STEMS
     if (leadsLength) {
         fputs(",\n  \"stems\": ", file);
         fwrite(skip_space(leads), 1, leadsLength, file);
     }
+#endif
     if (cue && cue->scale_mask)
         fprintf(file, ",\n  \"random_scale\": { \"scale\": \"%s\", \"key\": \"%s\" }",
                 cue->scale_name, pitch_name((int)cue->scale_root));

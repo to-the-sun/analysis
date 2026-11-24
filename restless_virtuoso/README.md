@@ -12,6 +12,7 @@ or WASAPI is involved and no non-ASIO device can be selected.
 
 ```bash
 make -C restless_virtuoso   # x86_64-w64-mingw32-gcc on PATH
+make -C restless_virtuoso padded   # restless_virtuoso_padded.exe, see Padded stems
 ```
 
 Or build with the same source in Visual Studio / MSVC as a console project linked
@@ -237,6 +238,17 @@ older stem it collides with deletes that file, and the stems instance drops it f
 the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
 the live instance is the only voice of that sound, and plays them again when that
 instance stops or changes sound.
+
+## Padded stems
+
+`restless_virtuoso_padded.exe` is the same program with the stems' lead-ins kept in
+their WAV files instead of `song.json`. Every stem is cued from the top of the loop and
+carries its own leading silence, so the folder plays in time in any player, and
+a song's `song.json` holds no `"stems"` object. The padding does what the lead-ins do:
+a take is written behind its lead-in of silence instead of being cued by it, a take that
+starts before the song's zero adds that much silence to every stem, and the silence all
+the stems share is trimmed away when the stem that starts first leaves. A folder written
+by one build is not aligned by the other.
 
 ## Notes
 
