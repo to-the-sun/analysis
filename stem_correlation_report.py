@@ -138,6 +138,7 @@ def card(stem, i):
         f'<div class="wrap"><canvas id="canvas{i}"></canvas>'
         f'<div class="tooltip" id="tip{i}"></div></div>'
         f'<div class="toolbar"><audio id="audio{i}" controls preload="metadata" src="{html.escape(stem["audio"])}"></audio>'
+        f'<button class="btn solo" id="solo{i}">Solo</button>'
         f'<button class="btn" id="reset{i}">Reset Zoom</button></div></section>'
     )
 
@@ -170,7 +171,9 @@ function fmt(t) {
 }
 
 const TOTAL = b64ToI16(META.total);
-const MAX_TOTAL = TOTAL.reduce((m, v) => Math.max(m, v), 1);
+const MIX_SRC = META.dataDir + '/mix.wav';
+let solo = null;
+let master = null;
 
 for (let i = 0; i < STEMS.length; i++) {
   const s = STEMS[i];
@@ -181,11 +184,7 @@ for (let i = 0; i < STEMS.length; i++) {
   for (let k = 0; k < TOTAL.length; k++) {
     s.others[k] = Math.max(0, TOTAL[k] - (k < s.own.length ? s.own[k] : 0));
   }
-  let m = 1;
-  for (let k = 0; k < TOTAL.length; k++) {
-    m = Math.max(m, TOTAL[k], s.own[k] || 0);
-  }
-  s.scale = Math.min(m, MAX_TOTAL) || 1;
+  s.scale = s.own.reduce((m, v) => Math.max(m, v), 1);
   s.view0 = 0;
   s.view1 = META.songDuration;
   s.hist = [];
@@ -194,6 +193,10 @@ for (let i = 0; i < STEMS.length; i++) {
   s.wrap = s.canvas.parentElement;
   s.tip = document.getElementById('tip' + i);
   s.audio = document.getElementById('audio' + i);
+  s.stemSrc = s.audio.getAttribute('src');
+  s.curSrc = MIX_SRC;
+  s.audio.src = MIX_SRC;
+  s.soloBtn = document.getElementById('solo' + i);
   s.viewEl = document.getElementById('view' + i);
   s.raf = 0;
   attach(s);
@@ -436,7 +439,7 @@ function draw(st) {
   paint(ctx, overlapPts, baseY, 'rgba(81,207,102,0.26)', null);
 
   if (mean > 0) {
-    const my = Math.round(mapY(mean / 32767)) + 0.5;
+    const my = Math.round(mapY(mean)) + 0.5;
     ctx.save();
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
@@ -471,8 +474,8 @@ function draw(st) {
     ctx.fillText(label, x, h - 3);
   }
 
-  const t = st.lead + (st.audio ? st.audio.currentTime : 0);
-  if (t >= st.view0 && t <= st.view1 && (t > 0 || !st.audio.paused)) {
+  const t = masterSongTime();
+  if (t !== null && t >= st.view0 && t <= st.view1 && (t > 0 || !master.paused)) {
     const x = (t - st.view0) / (st.view1 - st.view0) * w;
     ctx.strokeStyle = '#ff5252';
     ctx.lineWidth = 2;
@@ -551,28 +554,59 @@ function resetZoom(st) {
   render(st);
 }
 
-function seekAndPlay(st, t) {
-  t = Math.max(0, Math.min(st.duration, t - st.lead));
-  const go = () => {
-    try { st.audio.currentTime = t; } catch (e) {}
-    draw(st);
-    const p = st.audio.play();
-    if (p && p.catch) p.catch(() => {});
-  };
-  if (st.audio.readyState >= 1) go();
-  else st.audio.addEventListener('loadedmetadata', go, { once: true });
+function masterSongTime() {
+  if (!master) return null;
+  return solo === null ? master.currentTime : master.currentTime + STEMS[solo].lead;
 }
 
-let raf = 0;
-function playLoop() {
-  raf = 0;
-  let live = false;
+function setTime(a, t) {
+  const go = () => { try { a.currentTime = Math.max(0, t); } catch (e) {} };
+  if (a.readyState >= 1) go();
+  else a.addEventListener('loadedmetadata', go, { once: true });
+}
+
+function setSolo(i, t) {
+  solo = i;
   for (const st of STEMS) {
-    if (!st.audio || st.audio.paused) continue;
-    live = true;
-    draw(st);
+    const on = solo === st.id;
+    const src = on ? st.stemSrc : MIX_SRC;
+    if (st.curSrc !== src) {
+      st.audio.pause();
+      st.audio.src = src;
+      st.curSrc = src;
+    }
+    setTime(st.audio, on ? Math.max(0, t - st.lead) : t);
+    st.soloBtn.classList.toggle('on', on);
+    st.soloBtn.textContent = on ? 'Solo: on' : 'Solo';
+    st.audio.classList.toggle('locked', solo !== null && !on);
   }
-  if (live) raf = requestAnimationFrame(playLoop);
+}
+
+function seekAndPlay(st, t) {
+  if (solo !== null && solo !== st.id) setSolo(st.id, t);
+  const a = st.audio;
+  const local = Math.max(0, solo === null ? t : t - st.lead);
+  const go = () => {
+    try { a.currentTime = local; } catch (e) {}
+    master = st;
+    drawAll();
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
+  };
+  if (a.readyState >= 1) go();
+  else a.addEventListener('loadedmetadata', go, { once: true });
+}
+
+function drawAll() {
+  for (const st of STEMS) draw(st);
+}
+
+let raf = 0, lastPaint = 0;
+function playLoop(ts) {
+  raf = 0;
+  if (!master || master.paused) return;
+  if (ts - lastPaint >= 33) { lastPaint = ts; drawAll(); }
+  raf = requestAnimationFrame(playLoop);
 }
 
 function attach(st) {
@@ -628,11 +662,19 @@ function attach(st) {
   });
 
   document.getElementById('reset' + st.id).addEventListener('click', () => resetZoom(st));
-  st.audio.addEventListener('play', () => { if (!raf) raf = requestAnimationFrame(playLoop); });
-  st.audio.addEventListener('pause', () => draw(st));
-  st.audio.addEventListener('ended', () => draw(st));
-  st.audio.addEventListener('seeked', () => draw(st));
-  st.audio.addEventListener('timeupdate', () => draw(st));
+  st.soloBtn.addEventListener('click', () => {
+    setSolo(solo === st.id ? null : st.id, master ? masterSongTime() : 0);
+    drawAll();
+  });
+  st.audio.addEventListener('play', () => {
+    for (const o of STEMS) if (o !== st) o.audio.pause();
+    master = st;
+    if (!raf) raf = requestAnimationFrame(playLoop);
+  });
+  st.audio.addEventListener('pause', () => { if (st === master) drawAll(); });
+  st.audio.addEventListener('ended', () => { if (st === master) drawAll(); });
+  st.audio.addEventListener('seeked', () => { master = st; drawAll(); });
+  st.audio.addEventListener('timeupdate', () => { if (st === master) drawAll(); });
   window.addEventListener('resize', () => schedule(st));
 }
 """
@@ -668,6 +710,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   audio { height:34px; outline:none; border-radius:4px; }
   .btn { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:7px 14px; font-size:0.85rem; font-weight:600; cursor:pointer; }
   .btn:hover { opacity:0.88; }
+  .btn.solo { background:#33334a; }
+  .btn.solo.on { background:#51cf66; color:#0d0d11; }
+  audio.locked { opacity:0.35; pointer-events:none; }
   footer { font-size:0.78rem; color:var(--muted); padding:0 4px; }
 </style>
 </head>
@@ -683,7 +728,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
     <span><span class="swatch" style="border-top:1px dashed #fff"></span>Mean of this stem</span>
   </div>
-  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area, counting only the parts of the envelope above the stem's own mean (dashed line). Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Reset Zoom restores the whole song.</div>
+  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area, counting only the parts of the envelope above the stem's own mean (dashed line). Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Each graph is scaled so its own curve peaks at the top. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Solo plays that stem alone; with solo off the players carry every stem summed and peak-normalised to 1. Reset Zoom restores the whole song.</div>
 </header>
 <main>
 __CARDS__
@@ -749,6 +794,20 @@ def build(stems_dir, out_dir):
         own_area[i] = seg[above].sum()
         overlap[i] = np.minimum(seg[above], (total[lo:lo + seg.size] - seg)[above]).sum()
     scores = [float(o / a) if a > 0 else None for o, a in zip(overlap, own_area)]
+
+    mix_rate = max(s['sampleRate'] for s in stems)
+    mix = np.zeros(int(round(duration * mix_rate)) + 1, np.float64)
+    for s in stems:
+        a = int(round(s['lead'] * mix_rate))
+        src = np.arange(len(s['pcm'])) / s['sampleRate']
+        dst = np.arange(int(len(s['pcm']) * mix_rate / s['sampleRate'])) / mix_rate
+        sig = np.interp(dst, src, s['pcm'].astype(np.float32) / 32768.0)
+        n = min(len(mix) - a, len(sig))
+        mix[a:a + n] += sig[:n]
+    peak = float(np.abs(mix).max()) or 1.0
+    wavfile.write(os.path.join(data_dir, 'mix.wav'), int(mix_rate),
+                  np.clip(np.round(mix / peak * 32767), -32768, 32767).astype('<i2'))
+    print('Mix: %.2fs at %d Hz, peak-normalised' % (len(mix) / mix_rate, mix_rate))
 
     scale = float(max(total.max() if len(total) else 0.0, matrix.max() if matrix.size else 0.0)) or 1.0
     def q(env):
