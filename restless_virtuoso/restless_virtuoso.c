@@ -2653,6 +2653,7 @@ static void render_drums(float *dst, int outputs, int frames)
 
 static HMODULE vstLibraries[VST_MAX_PLUGINS];
 static char vstNames[VST_MAX_PLUGINS][VST_NAME];
+static char vstEffectNames[VST_MAX_PLUGINS][VST_NAME];
 static int vstLibraryCount, vstActiveLibrary = -1, vstOutputCount, vstProgram, vstPresetCount;
 static AEffect *vstInstances[VST_MAX_PLUGINS];
 static int vstLibraryPresets[VST_MAX_PLUGINS], vstLibraryLow[VST_MAX_PLUGINS], vstLibraryHigh[VST_MAX_PLUGINS];
@@ -3183,9 +3184,8 @@ static void init_vst_taste(int library)
     if (!stats || stats->presets <= 0) {
         AEffect *effect = create_effect(vstLibraries[library]);
         if (effect && effect->dispatcher) {
-            char name[VST_NAME];
-            effect_name(effect, name, sizeof name);
-            VstStats *named = find_vst_stats(name, vstNames[library]);
+            effect_name(effect, vstEffectNames[library], VST_NAME);
+            VstStats *named = find_vst_stats(vstEffectNames[library], vstNames[library]);
             if (named && named->presets > 0) stats = named;
             vstLibraryPresets[library] = stats && stats->presets > 0 ? stats->presets : effect->numPrograms;
             vst_call(effect, effClose, 0, 0, NULL, 0);
@@ -4316,14 +4316,16 @@ static int find_vst_library(const char *name)
         if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
     }
 
+    /* A library is asked its effect name once: building an instance to ask again makes
+       the plugin construct and destroy its whole state on every sound it restores. */
     for (int i = 0; i < vstLibraryCount; i++) {
-        AEffect *effect = create_effect(vstLibraries[i]);
-        if (!effect || !effect->dispatcher) continue;
-
-        char effectName[VST_NAME];
-        effect_name(effect, effectName, sizeof effectName);
-        vst_call(effect, effClose, 0, 0, NULL, 0);
-        if (effectName[0] && !_stricmp(effectName, name)) return i;
+        if (!vstEffectNames[i][0]) {
+            AEffect *effect = create_effect(vstLibraries[i]);
+            if (!effect || !effect->dispatcher) continue;
+            effect_name(effect, vstEffectNames[i], VST_NAME);
+            vst_call(effect, effClose, 0, 0, NULL, 0);
+        }
+        if (vstEffectNames[i][0] && !_stricmp(vstEffectNames[i], name)) return i;
     }
     return -1;
 }
