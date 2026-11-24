@@ -138,7 +138,7 @@ def card(stem, i):
         f'<div class="wrap"><canvas id="canvas{i}"></canvas>'
         f'<div class="tooltip" id="tip{i}"></div></div>'
         f'<div class="toolbar"><audio id="audio{i}" controls preload="metadata" src="{html.escape(stem["audio"])}"></audio>'
-        f'<button class="btn solo" id="solo{i}">Solo</button>'
+        f'<button class="btn solo on" id="solo{i}">Solo: on</button>'
         f'<button class="btn" id="reset{i}">Reset Zoom</button></div></section>'
     )
 
@@ -172,7 +172,6 @@ function fmt(t) {
 
 const TOTAL = b64ToI16(META.total);
 const MIX_SRC = META.dataDir + '/mix.wav';
-let solo = null;
 let master = null;
 
 for (let i = 0; i < STEMS.length; i++) {
@@ -194,8 +193,7 @@ for (let i = 0; i < STEMS.length; i++) {
   s.tip = document.getElementById('tip' + i);
   s.audio = document.getElementById('audio' + i);
   s.stemSrc = s.audio.getAttribute('src');
-  s.curSrc = MIX_SRC;
-  s.audio.src = MIX_SRC;
+  s.solo = true;
   s.soloBtn = document.getElementById('solo' + i);
   s.viewEl = document.getElementById('view' + i);
   s.raf = 0;
@@ -475,7 +473,7 @@ function draw(st) {
   }
 
   const t = masterSongTime();
-  if (t !== null && t >= st.view0 && t <= st.view1 && (t > 0 || !master.paused)) {
+  if (t !== null && t >= st.view0 && t <= st.view1 && (t > 0 || !master.audio.paused)) {
     const x = (t - st.view0) / (st.view1 - st.view0) * w;
     ctx.strokeStyle = '#ff5252';
     ctx.lineWidth = 2;
@@ -556,36 +554,34 @@ function resetZoom(st) {
 
 function masterSongTime() {
   if (!master) return null;
-  return solo === null ? master.currentTime : master.currentTime + STEMS[solo].lead;
+  return master.solo ? master.audio.currentTime + master.lead : master.audio.currentTime;
 }
 
-function setTime(a, t) {
-  const go = () => { try { a.currentTime = Math.max(0, t); } catch (e) {} };
+function setTime(a, t, resume) {
+  const go = () => {
+    try { a.currentTime = Math.max(0, t); } catch (e) {}
+    if (resume) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+  };
   if (a.readyState >= 1) go();
   else a.addEventListener('loadedmetadata', go, { once: true });
 }
 
-function setSolo(i, t) {
-  solo = i;
-  for (const st of STEMS) {
-    const on = solo === st.id;
-    const src = on ? st.stemSrc : MIX_SRC;
-    if (st.curSrc !== src) {
-      st.audio.pause();
-      st.audio.src = src;
-      st.curSrc = src;
-    }
-    setTime(st.audio, on ? Math.max(0, t - st.lead) : t);
-    st.soloBtn.classList.toggle('on', on);
-    st.soloBtn.textContent = on ? 'Solo: on' : 'Solo';
-    st.audio.classList.toggle('locked', solo !== null && !on);
-  }
+function toggleSolo(st) {
+  const t = st.solo ? st.audio.currentTime + st.lead : st.audio.currentTime;
+  const resume = !st.audio.paused;
+  st.solo = !st.solo;
+  st.audio.pause();
+  st.audio.src = st.solo ? st.stemSrc : MIX_SRC;
+  setTime(st.audio, st.solo ? t - st.lead : t, resume);
+  st.soloBtn.classList.toggle('on', st.solo);
+  st.soloBtn.textContent = st.solo ? 'Solo: on' : 'Solo: off';
+  if (!master || master === st) master = st;
+  drawAll();
 }
 
 function seekAndPlay(st, t) {
-  if (solo !== null && solo !== st.id) setSolo(st.id, t);
   const a = st.audio;
-  const local = Math.max(0, solo === null ? t : t - st.lead);
+  const local = Math.max(0, st.solo ? t - st.lead : t);
   const go = () => {
     try { a.currentTime = local; } catch (e) {}
     master = st;
@@ -604,7 +600,7 @@ function drawAll() {
 let raf = 0, lastPaint = 0;
 function playLoop(ts) {
   raf = 0;
-  if (!master || master.paused) return;
+  if (!master || master.audio.paused) return;
   if (ts - lastPaint >= 33) { lastPaint = ts; drawAll(); }
   raf = requestAnimationFrame(playLoop);
 }
@@ -662,10 +658,7 @@ function attach(st) {
   });
 
   document.getElementById('reset' + st.id).addEventListener('click', () => resetZoom(st));
-  st.soloBtn.addEventListener('click', () => {
-    setSolo(solo === st.id ? null : st.id, master ? masterSongTime() : 0);
-    drawAll();
-  });
+  st.soloBtn.addEventListener('click', () => toggleSolo(st));
   st.audio.addEventListener('play', () => {
     for (const o of STEMS) if (o !== st) o.audio.pause();
     master = st;
@@ -712,7 +705,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .btn:hover { opacity:0.88; }
   .btn.solo { background:#33334a; }
   .btn.solo.on { background:#51cf66; color:#0d0d11; }
-  audio.locked { opacity:0.35; pointer-events:none; }
   footer { font-size:0.78rem; color:var(--muted); padding:0 4px; }
 </style>
 </head>
@@ -728,7 +720,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <span><span class="swatch" style="background:#ff5252"></span>Playhead</span>
     <span><span class="swatch" style="border-top:1px dashed #fff"></span>Mean of this stem</span>
   </div>
-  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area, counting only the parts of the envelope above the stem's own mean (dashed line). Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Each graph is scaled so its own curve peaks at the top. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Solo plays that stem alone; with solo off the players carry every stem summed and peak-normalised to 1. Reset Zoom restores the whole song.</div>
+  <div class="hint">Score = the area shared by this stem's transience envelope and the sum of every other stem's, divided by this stem's own transience area, counting only the parts of the envelope above the stem's own mean (dashed line). Transience is the positive derivative of the peak-amplitude envelope. Stems sit at their <code>song.json</code> lead-ins, so every graph shares the song timeline. Each graph is scaled so its own curve peaks at the top. Drag horizontally to zoom, right-click to zoom out one level, click to move the playhead and play. Solo is on for every row by default; turn it off on a row to have that player carry every stem summed and peak-normalised to 1. Reset Zoom restores the whole song.</div>
 </header>
 <main>
 __CARDS__
