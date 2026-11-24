@@ -425,11 +425,11 @@ function draw(st) {
 
   const own = st.own, others = st.others, mean = st.mean || 0;
   const t0 = st.view0, t1 = st.view1;
-  const ownPts = envPoints(k => own[k], own.length, t0, t1, w, mapY, st.lead);
+  const ownPts = envPoints(k => own[k], own.length, t0, t1, w, mapY, 0);
   const otherPts = envPoints(k => k / RATE >= st.lead && k / RATE <= st.lead + st.duration ? others[k] : 0,
-    others.length, t0, t1, w, mapY, st.lead);
+    others.length, t0, t1, w, mapY, 0);
   const overlapPts = envPoints(k => (own[k] || 0) > mean ? Math.min(own[k], others[k] || 0) : 0,
-    TOTAL.length, t0, t1, w, mapY, st.lead);
+    TOTAL.length, t0, t1, w, mapY, 0);
 
   paint(ctx, otherPts, baseY, 'rgba(255,169,77,0.13)', 'rgba(255,169,77,0.5)');
   paint(ctx, ownPts, baseY, 'rgba(77,171,247,0.20)', 'rgba(77,171,247,0.5)');
