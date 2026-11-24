@@ -259,17 +259,84 @@ def merge(comps, threshold):
     return fcluster(linkage(squareform(D, checks=False), 'single'), threshold, 'distance')
 
 
+def bin_rank(hit):
+    return round(hit[0], 2), hit[1]['segments']
+
+
+PITCH_TOL, DRIFT_TOL = 40.0, 100.0
+
+
+def cents(a, b):
+    return float(1200 * abs(np.log2(a / b)))
+
+
+def merge_pitched(rows):
+    """Group attacks by pitch: within 40 cents is the same note.
+
+    A wider match, up to a semitone, joins only the group it was just heard
+    in, so a note that drifts stays one element while two notes a semitone
+    apart stay separate. Timbre and decay break ties between candidates.
+    """
+    groups, label = [], np.zeros(len(rows), int)
+    for i in sorted(range(len(rows)), key=lambda i: rows[i]['t']):
+        c = rows[i]
+        best = None
+        for gi, g in enumerate(groups):
+            d = cents(c['f0'], g['f0'])
+            if d > DRIFT_TOL:
+                continue
+            far = d > PITCH_TOL
+            if far and (c['t'] - g['last'] > 2.5 * g['gap'] + 0.3 or
+                        cents(g['lo'], c['f0']) > DRIFT_TOL or
+                        cents(g['hi'], c['f0']) > DRIFT_TOL):
+                continue
+            tie = float(np.abs(c['timbre'] - g['timbre']).sum()) \
+                + 0.3 * abs(np.log((c['decay'] + 0.02) / (g['decay'] + 0.02)))
+            key = (far, tie)
+            if best is None or key < best[0]:
+                best = (key, gi)
+        if best is None:
+            groups.append({'f0s': [c['f0']], 'f0': c['f0'], 'lo': c['f0'], 'hi': c['f0'],
+                           'last': c['t'], 'gap': 0.5, 'n': 1,
+                           'timbre': c['timbre'], 'decay': c['decay']})
+            label[i] = len(groups) - 1
+            continue
+        g = groups[best[1]]
+        g['gap'] = (g['gap'] * g['n'] + c['t'] - g['last']) / (g['n'] + 1)
+        g['f0s'].append(c['f0'])
+        g['f0'] = float(np.median(g['f0s']))
+        g['lo'], g['hi'] = min(g['lo'], c['f0']), max(g['hi'], c['f0'])
+        g['n'] += 1
+        g['last'] = c['t']
+        label[i] = best[1]
+    return label
+
+
 def elements(comps):
     if not comps:
         return []
-    labels = merge(comps, 0.7)
+    labels = np.zeros(len(comps), int)
+    pitched = [i for i, c in enumerate(comps) if c['kind'] == 'pitched']
+    others = [i for i, c in enumerate(comps) if c['kind'] != 'pitched']
+    if pitched:
+        labels[pitched] = merge_pitched([comps[i] for i in pitched]) + 1
+        start = labels.max() + 1
+    else:
+        start = 0
+    if others:
+        labels[others] = merge([comps[i] for i in others], 0.7) + start
     groups = {lab: np.flatnonzero(labels == lab) for lab in np.unique(labels)}
-    # Series of one attack that always arrive together are one element: a
-    # fundamental plus a strong overtone, not two instruments.
+    # A series at an integer multiple of another that is always heard with it is
+    # its overtone, not a second instrument.
     base = {lab: lab for lab in groups}
-    pitched = [lab for lab in groups if comps[groups[lab][0]]['kind'] == 'pitched']
-    for i, a in enumerate(pitched):
-        for b in pitched[i + 1:]:
+    plabs = sorted({int(labels[i]) for i in pitched})
+    f0s = {lab: float(np.median([comps[k]['f0'] for k in groups[lab]])) for lab in plabs}
+    for i, a in enumerate(plabs):
+        for b in plabs[i + 1:]:
+            ratio = max(f0s[a], f0s[b]) / min(f0s[a], f0s[b])
+            k = int(round(ratio))
+            if k < 2 or abs(ratio - k) > 0.02 * ratio:
+                continue
             ta = {round(comps[k]['t'], 2) for k in groups[a]}
             tb = {round(comps[k]['t'], 2) for k in groups[b]}
             if len(ta & tb) / max(1, min(len(ta), len(tb))) >= 0.5:
@@ -279,8 +346,15 @@ def elements(comps):
     out = []
     for lab in np.unique(labels):
         idx = np.flatnonzero(labels == lab)
-        rows = [comps[i] for i in idx]
-        times = np.array(sorted({round(c['t'], 3) for c in rows}))
+        # one series per attack: the strongest read-out of the element's pitch
+        seen, keep = set(), []
+        for i in sorted(idx, key=lambda i: -comps[i]['amp']):
+            key = round(comps[i]['t'], 3)
+            if key not in seen:
+                seen.add(key)
+                keep.append(int(i))
+        rows = [comps[i] for i in sorted(keep, key=lambda i: comps[i]['t'])]
+        times = np.array(sorted(seen))
         e = {'kind': rows[0]['kind'], 'times': times,
              'count': len(times), 'amp': float(np.median([c['amp'] for c in rows]))}
         if e['kind'] == 'pitched':
@@ -362,6 +436,29 @@ def runs_from(chain_, times, p):
                     'end': float(base[-1] + loop), 'segments': int(len(base)),
                     'times': base, 'resid': float(np.mean(np.abs(resid)) / loop)})
     return out
+
+
+def coverage(times, run):
+    """Share of the element's onsets in the run's region that land on its grid."""
+    times = np.asarray(times)
+    sel = times[(times >= run['start'] - 0.5 * run['loop']) &
+                (times <= run['end'] + 0.5 * run['loop'])]
+    if not len(sel):
+        return 0.0
+    d = np.abs(sel[:, None] - np.asarray(run['times'])[None, :]).min(1)
+    return float((d <= max(0.12 * run['loop'], 0.06)).mean())
+
+
+def corroborated(times, run, share=0.25):
+    """A grid read off the envelope still needs onsets of its element behind it."""
+    times = np.sort(np.asarray(times))
+    tol = max(0.12 * run['loop'], 0.1)
+    hits = 0
+    for g in np.asarray(run['times']):
+        j = int(np.searchsorted(times, g))
+        near = times[max(0, j - 1):j + 1]
+        hits += bool(len(near) and np.abs(near - g).min() <= tol)
+    return hits >= share * len(run['times'])
 
 
 def patterns_for(times, min_p=MIN_P, max_p=MAX_P, tol_loop=0.05):
@@ -628,8 +725,20 @@ def analyse(path):
 
     patterns = []
     for e in els:
-        runs = (activation_patterns(e, f, t, power) if e['kind'] == 'pitched'
-                else patterns_for(e['times']))
+        if e['kind'] == 'pitched':
+            runs = [r for r in activation_patterns(e, f, t, power)
+                    if corroborated(e['times'], r)]
+        else:
+            # a percussive element is one sound: one row per loop it is heard
+            # at, the one whose grid accounts for the most of it
+            hits = [(coverage(e['times'], r), r) for r in patterns_for(e['times'])]
+            bins = {}
+            for h in hits:
+                k = round(np.log(h[1]['loop'] / MIN_P) / 0.05)
+                if k not in bins or bin_rank(h) > bin_rank(bins[k]):
+                    bins[k] = h
+            top = max(bins.values(), key=bin_rank, default=None)
+            runs = [h[1] for h in bins.values() if h == top or h[0] >= 0.3]
         ioi = np.median(np.diff(np.unique(np.round(e['times'], 3)))) if len(e['times']) > 1 else 0.0
         runs = [r for r in runs if r['loop'] >= 0.9 * ioi]
         for row in group_rows(runs, e):
