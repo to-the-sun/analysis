@@ -428,8 +428,8 @@ function draw(st) {
   const otherPts = envPoints(k => others[k], others.length, t0, t1, w, mapY, st.lead);
   const overlapPts = envPoints(k => Math.min(own[k] || 0, others[k] || 0), TOTAL.length, t0, t1, w, mapY, st.lead);
 
-  paint(ctx, otherPts, baseY, 'rgba(255,169,77,0.13)', 'rgba(255,169,77,0.85)');
-  paint(ctx, ownPts, baseY, 'rgba(77,171,247,0.20)', 'rgba(77,171,247,0.95)');
+  paint(ctx, otherPts, baseY, 'rgba(255,169,77,0.13)', 'rgba(255,169,77,0.5)');
+  paint(ctx, ownPts, baseY, 'rgba(77,171,247,0.20)', 'rgba(77,171,247,0.5)');
   paint(ctx, overlapPts, baseY, 'rgba(81,207,102,0.26)', null);
 
   ctx.strokeStyle = 'rgba(255,255,255,0.30)';
