@@ -206,7 +206,8 @@ With no stems instance running it records while its own rating is above zero, an
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
 `restless_virtuoso.exe` is started on that folder. A take is named after the sound that
-played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs is
+played it, e.g. `3 16 drum samples.wav`, or after the audio device when it has no
+sound, e.g. `0 Focusrite USB ASIO.wav`, and one recorded while a stems instance runs is
 placed from the loop point of the pass it overlaps most, as the song builder places a
 pattern in its pass, so the audio lands where it was played in the song. That placement
 is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
@@ -247,5 +248,5 @@ instance stops or changes sound.
 - Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
-- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages and errors.
+- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors.
 - At startup, the program's logs older than 7 days are moved to the Recycle Bin.

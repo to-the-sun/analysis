@@ -1883,12 +1883,18 @@ static int write_wav(const wchar_t *path, TakeChunk *first, drwav_uint64 frames,
     return 1;
 }
 
-/* The take is named after the sound that played it. */
+/* The take is named after the sound that played it, or after the audio device that
+   played one with no sound, so two devices' takes in one song can be told apart. */
 static void recording_name(wchar_t *out, size_t size)
 {
     out[0] = 0;
     if (!recording.number || !recording.sound[0]) {
-        wcsncpy(out, L"audio", size - 1);
+        wchar_t device[128] = L"";
+        MultiByteToWideChar(CP_ACP, 0, g.driverName, -1, device, 128);
+        for (wchar_t *p = device; *p; p++)
+            if (wcschr(L"\\/:*?\"<>|", *p)) *p = L'-';
+        if (device[0]) swprintf(out, size, L"0 %ls", device);
+        else wcsncpy(out, L"audio", size - 1);
         out[size - 1] = 0;
         return;
     }
@@ -2708,35 +2714,74 @@ static VstStats *find_vst_stats(const char *name, const char *file)
 static float *vstZeros, *vstOutputMemory;
 static float **vstInputs, **vstOutputs;
 
+static double vst_log_time(void);
+
+static const char *host_opcode_name(int32_t opcode)
+{
+    switch (opcode) {
+    case audioMasterVersion: return "version";
+    case audioMasterGetSampleRate: return "getSampleRate";
+    case audioMasterGetBlockSize: return "getBlockSize";
+    case audioMasterGetCurrentProcessLevel: return "getCurrentProcessLevel";
+    case audioMasterGetVendorString: return "getVendorString";
+    case audioMasterGetProductString: return "getProductString";
+    case audioMasterGetVendorVersion: return "getVendorVersion";
+    default: return NULL;
+    }
+}
+
+/* The first call of each opcode is logged with what the host answered. A plugin that
+   prints a complaint to the console is usually asking the host for something here, so
+   an unhandled opcode in the log names the reason. */
 static intptr_t host_callback(AEffect *effect, int32_t opcode, int32_t index, intptr_t value,
                               void *ptr, float opt)
 {
-    (void)effect;
     (void)index;
     (void)value;
     (void)opt;
 
+    intptr_t result;
     switch (opcode) {
-    case audioMasterVersion: return 2400;
-    case audioMasterGetSampleRate: return (intptr_t)g.rate;
-    case audioMasterGetBlockSize: return g.bufferSize;
-    case audioMasterGetCurrentProcessLevel: return 2;
-    case audioMasterGetVendorVersion: return 1;
+    case audioMasterVersion: result = 2400; break;
+    case audioMasterGetSampleRate: result = (intptr_t)g.rate; break;
+    case audioMasterGetBlockSize: result = g.bufferSize; break;
+    case audioMasterGetCurrentProcessLevel: result = 2; break;
+    case audioMasterGetVendorVersion: result = 1; break;
     case audioMasterGetVendorString:
     case audioMasterGetProductString:
         if (ptr) strcpy((char *)ptr, "restless_virtuoso");
-        return 1;
-    default: return 0;
+        result = 1;
+        break;
+    default: result = 0;
     }
+
+    static unsigned char logged[256], loggedOther;
+    int known = opcode >= 0 && opcode < 256;
+    int first = known ? !logged[opcode] : !loggedOther;
+    if (known) logged[opcode] = 1;
+    else loggedOther = 1;
+    if (first) {
+        const char *name = host_opcode_name(opcode);
+        log_trace("[%9.3f] thread %lu host callback for %p, opcode %d %s%s -> %lld\n",
+                  vst_log_time(), GetCurrentThreadId(), (void *)effect, opcode,
+                  name ? name : "unhandled", name ? "" : " (answered 0)", (long long)result);
+    }
+    return result;
 }
 
 static AEffect *create_effect(HMODULE library)
 {
+    char module[MAX_PATH] = "";
+    GetModuleFileNameA(library, module, MAX_PATH);
+
     AEffect *(*entry)(VstHostCallbackProc) = (void *)GetProcAddress(library, "VSTPluginMain");
     if (!entry) entry = (void *)GetProcAddress(library, "main");
     if (!entry) return NULL;
 
+    log_trace("[%9.3f] thread %lu creating plugin from '%s'\n", vst_log_time(), GetCurrentThreadId(), module);
     AEffect *effect = entry(host_callback);
+    log_trace("[%9.3f] thread %lu plugin from '%s' %s\n", vst_log_time(), GetCurrentThreadId(), module,
+              effect && effect->magic == kVstEffectMagic ? "created" : "refused to start");
     if (!effect || effect->magic != kVstEffectMagic) return NULL;
     return effect;
 }
@@ -3420,6 +3465,25 @@ static void render_vst(float *dst, int outputs, int frames)
 {
     if (!vstEffect) return;
     if (vstChanging) vstProcessedWhileChanging = 1;
+
+    /* Processing is logged when it starts and whenever it comes back after a gap, so a
+       message the plugin prints on the console can be placed beside the audio state it
+       saw at that moment. */
+    static AEffect *processed;
+    static double lastProcess;
+    double now = vst_log_time();
+    if (vstEffect != processed) {
+        log_trace("[%9.3f] thread %lu processing starts: plugin %p, inputs %d outputs %d, flags 0x%x, "
+                  "%s, sound %d, %d frames at %.0f Hz\n", now, GetCurrentThreadId(), (void *)vstEffect,
+                  vstEffect->numInputs, vstEffect->numOutputs, (unsigned)vstEffect->flags,
+                  vstEffect->processReplacing ? "processReplacing" : "process", g.soundNumber,
+                  frames, g.rate);
+        processed = vstEffect;
+    } else if (lastProcess && now - lastProcess > 100.0) {
+        log_trace("[%9.3f] thread %lu processing resumes after %.0f ms on plugin %p, sound %d\n",
+                  now, GetCurrentThreadId(), now - lastProcess, (void *)vstEffect, g.soundNumber);
+    }
+    lastProcess = now;
 
     if (midiEvents.numEvents)
         vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, (VstEvents *)&midiEvents, 0);
