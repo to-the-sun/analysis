@@ -370,8 +370,10 @@ that overlaps no kept stem of its class joins the song. When it does overlap one
 song as it stands at that moment is rated twice through the bundled copy of
 `cumulative_flux.c`: once with the new pattern and once with the kept one,
 each alongside every other stem currently in the song, all of them accumulating
-into one shared history buffer with a 15,000 ms window and 4 bands. A rating is
-the average of every score every stem produced over the whole song; the higher
+into one shared history buffer with a 15,000 ms window and 4 bands. A rating
+covers only the contested span, the union of the two patterns' regions: every
+stem is fed from 15 s before that span so its window is warm, but only the
+peaks inside the span are scored, and the rating is their average. The higher
 rating is admitted and the loser is dropped from the stems and master. A pattern
 is compared against each overlapping kept stem of its class in turn. `null`
 sounds never collide.

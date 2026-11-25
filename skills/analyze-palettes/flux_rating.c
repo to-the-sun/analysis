@@ -1,5 +1,6 @@
 /* Rates one proposed song: every stem in song time, one analyzer each, one
-   shared group history. Prints the average of every score they produce. */
+   shared group history. Prints the average of the scores inside the given
+   span, after warming the 15 s window up on the audio before it. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,12 +82,17 @@ static float* read_pcm16(const char* path, long long* frames, int* sample_rate) 
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: flux_rating <stem.wav> [stem.wav ...]\n");
+    if (argc < 5 || strcmp(argv[1], "--score")) {
+        fprintf(stderr, "usage: flux_rating --score <from s> <to s> <stem.wav> [stem.wav ...]\n");
+        return 2;
+    }
+    double from_s = atof(argv[2]), to_s = atof(argv[3]);
+    if (!(to_s > from_s)) {
+        fprintf(stderr, "score span is empty\n");
         return 2;
     }
 
-    int count = argc - 1;
+    int count = argc - 4;
     float** audio = (float**)calloc((size_t)count, sizeof(float*));
     long long* frames = (long long*)calloc((size_t)count, sizeof(long long));
     TransientAnalyzer** analyzers = (TransientAnalyzer**)calloc((size_t)count, sizeof(TransientAnalyzer*));
@@ -96,14 +102,14 @@ int main(int argc, char** argv) {
     long long total = 0;
     for (int i = 0; i < count; i++) {
         int file_sr = 0;
-        audio[i] = read_pcm16(argv[i + 1], &frames[i], &file_sr);
+        audio[i] = read_pcm16(argv[i + 4], &frames[i], &file_sr);
         if (!audio[i]) {
-            fprintf(stderr, "not a 16-bit PCM WAV: %s\n", argv[i + 1]);
+            fprintf(stderr, "not a 16-bit PCM WAV: %s\n", argv[i + 4]);
             return 2;
         }
         if (!sr) sr = file_sr;
         if (file_sr != sr) {
-            fprintf(stderr, "sample rate mismatch: %s\n", argv[i + 1]);
+            fprintf(stderr, "sample rate mismatch: %s\n", argv[i + 4]);
             return 2;
         }
         if (frames[i] > total) total = frames[i];
@@ -124,16 +130,29 @@ int main(int argc, char** argv) {
     int hop = sr / 1000;
     if (hop < 1) hop = 1;
     int step = hop * STEP_MS;
-    int flush = sr * 3 / 10;
-    long long steps = (total + flush + step - 1) / step;
+    int flush = sr / 5;
+    long long window = (long long)sr * WINDOW_MS / 1000;
+    long long score_from = (long long)(from_s * sr + 0.5);
+    long long score_to = (long long)(to_s * sr + 0.5);
+    if (score_to > total) score_to = total;
+    long long origin = score_from - flush - (long long)(WINDOW_MS / STEP_MS + 4) * step;
+    if (origin < 0) origin = 0;
+    long long steps = (score_to + flush - origin + step - 1) / step;
     float* push = (float*)calloc((size_t)step, sizeof(float));
     ChunkAnalysisResult* chunk = (ChunkAnalysisResult*)malloc(sizeof(ChunkAnalysisResult));
     if (!push || !chunk) return 2;
 
+    int scoring = 0;
     for (long long t = 0; t < steps; t++) {
-        long long last = t * step;
-        long long act = last - sr / 5;
-        long long win = act - (long long)sr * WINDOW_MS / 1000;
+        long long last = origin + t * step;
+        long long act = last - flush;
+        if (!scoring && act >= score_from) {
+            shared.total_score_sum = 0.0;
+            shared.score_count = 0;
+            scoring = 1;
+        }
+        act -= origin;
+        long long win = act - window;
         if (win < 0) win = 0;
 
         for (int i = 0; i < count; i++) {

@@ -25,6 +25,8 @@ import passes
 
 STEPS = [4096, 512, 64]
 SEAM_S = 0.004
+LEAD_IN = 16.0
+TAIL = 0.5
 HERE = os.path.dirname(os.path.abspath(__file__))
 RATER = os.path.join(HERE, 'flux_rating')
 RATER_SOURCES = [os.path.join(HERE, n) for n in ('flux_rating.c', 'cumulative_flux.c')]
@@ -189,21 +191,27 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     ends = [int(round(start_s[i] * sr)) + len(p['segments']) * int(round(p['length'] * sr))
             for i, (_, p) in enumerate(pats)]
 
-    def proposed_rating(members):
-        """Rate the proposed song: every stem in one pass, one shared history."""
+    def proposed_rating(members, start, end):
+        """Rate the contested span in every stem, with a lead-in for the 15 s window."""
         rater = rater_executable()
-        total = max(ends[k] for k in members)
+        first = int(round(max(0.0, start - LEAD_IN) * sr))
+        stop = min(max(ends[k] for k in members), int(round((end + TAIL) * sr)))
         tmp = tempfile.mkdtemp()
         try:
             paths = []
             for n, k in enumerate(members):
-                sig = np.zeros(total)
+                sig = np.zeros(stop - first)
                 reg = stem_signal(k)
-                sig[int(round(start_s[k] * sr)):][:len(reg)] = reg
+                at = int(round(start_s[k] * sr)) - first
+                lo, hi = max(0, at), min(len(sig), at + len(reg))
+                if hi > lo:
+                    sig[lo:hi] = reg[lo - at:hi - at]
                 path = os.path.join(tmp, 'stem_%d.wav' % (n + 1))
                 wavfile.write(path, sr, np.clip(np.round(sig * 32767), -32768, 32767).astype('<i2'))
                 paths.append(path)
-            run = subprocess.run([rater] + paths, capture_output=True, text=True)
+            span = ('%.6f' % ((int(round(start * sr)) - first) / sr),
+                    '%.6f' % ((min(int(round(end * sr)), stop) - first) / sr))
+            run = subprocess.run([rater, '--score'] + list(span) + paths, capture_output=True, text=True)
             if run.returncode != 0:
                 raise RuntimeError('song rating failed: %s' % run.stderr.strip())
             return float(run.stdout.strip().splitlines()[-1])
@@ -219,7 +227,9 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
                   and start_s[i] < start_s[j] + spans[j]
                   and start_s[j] < start_s[i] + spans[i]]:
             others = [k for k in keep if k != j]
-            r_new, r_old = proposed_rating(others + [i]), proposed_rating(others + [j])
+            lo = min(start_s[i], start_s[j])
+            hi = max(start_s[i] + spans[i], start_s[j] + spans[j])
+            r_new, r_old = proposed_rating(others + [i], lo, hi), proposed_rating(others + [j], lo, hi)
             print('overlap %s: pattern %s rated %.6f, pattern %s rated %.6f'
                   % (' '.join(str(k) for k in key), p['id'], r_new, pats[j][1]['id'], r_old))
             if r_new > r_old:
