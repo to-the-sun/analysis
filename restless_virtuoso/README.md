@@ -147,7 +147,9 @@ records one `index, milliseconds number mode;` line for the sound it started wit
 each `new sound`, timed from the take's start; `mode` is `samples` for a drum sample
 set and `synth` for a VST preset. Every running instance shares one numbered list of
 sounds, so a number identifies a drum sample set or VST preset in every take, and the
-console prints the number with the description. A take with no sound applied holds
+console prints the number with the description. A drawn sound always takes the next
+number, even when its preset is already in the list, so a draw never jumps back to an
+older sound. A take with no sound applied holds
 the single line `0, 0.000000 audio;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its

@@ -3689,8 +3689,9 @@ static void open_sounds(void)
 }
 
 /* One list for every running instance, so a number names the same sound in each take.
-   Each shuffled drum set is a different sound, so those always get a new number. */
-static int sound_number(const char *name, int unique, int seed)
+   Every drawn sound takes a new number, even a preset already in the list, so a draw
+   never jumps back to an older sound. */
+static int sound_number(const char *name, int seed)
 {
     open_sounds();
     if (!soundList) return 0;
@@ -3698,10 +3699,7 @@ static int sound_number(const char *name, int unique, int seed)
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
 
     int count = (int)soundList->count, number = 0;
-    for (int i = 0; !unique && i < count; i++)
-        if (!strcmp(soundList->name[i], name)) { number = i + 1; break; }
-
-    if (!number && count < SOUND_MAX) {
+    if (count < SOUND_MAX) {
         strncpy(soundList->name[count], name, SOUND_NAME - 1);
         soundList->name[count][SOUND_NAME - 1] = 0;
         soundList->seed[count] = seed;
@@ -4225,7 +4223,7 @@ static void load_song(void)
         }
     }
     if (adopt)
-        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
+        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, seeds[i]);
 
     const char *instruments = json_value(text, "instruments");
     if (instruments && *instruments == '[') load_song_instruments(instruments);
@@ -4617,7 +4615,7 @@ static void print_sound(const char *prefix)
     if (!name[0]) return;
 
     if (!g.soundNumber)
-        g.soundNumber = sound_number(name, g.samplesSound, g.samplesSound ? drumSeed : 0);
+        g.soundNumber = sound_number(name, g.samplesSound ? drumSeed : 0);
     remember_sound(g.soundNumber);
     save_song();
 
