@@ -232,7 +232,8 @@ another take of the same audio device. A take whose active audio overlaps an
 older stem it collides with deletes that file, and the stems instance drops it from
 the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
 the live instance is the only voice of that sound, and plays them again when that
-instance stops or changes sound.
+instance stops or changes sound. A running audio device does the same for the stems
+named after it, and leaves the other devices' stems playing.
 
 ## Notes
 

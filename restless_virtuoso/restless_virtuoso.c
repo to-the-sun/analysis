@@ -3658,6 +3658,7 @@ static void new_vst_sound(void)
 #define SOUND_MAX 1024
 #define SOUND_NAME 128
 #define INSTRUMENT_MAX 64
+#define AUDIO_MAX 16
 
 typedef struct {
     volatile LONG lock;
@@ -3669,6 +3670,10 @@ typedef struct {
     int last[INSTRUMENT_MAX];
     volatile LONG pid[INSTRUMENT_MAX];
     volatile LONGLONG beat[INSTRUMENT_MAX];
+    volatile LONG audioCount;
+    char audio[AUDIO_MAX][MAX_PATH];
+    volatile LONG audioPid[AUDIO_MAX];
+    volatile LONGLONG audioBeat[AUDIO_MAX];
 } SoundList;
 
 static HANDLE soundMapping;
@@ -3767,6 +3772,44 @@ static void withdraw_instrument(void)
     if (slot >= 0) soundList->pid[slot] = 0;
 }
 
+/* A running audio device leaves its driver name and a heartbeat, so a stems instance
+   mutes only the takes that device itself recorded and lets other devices' play. */
+static void announce_audio_device(void)
+{
+    open_sounds();
+    if (!soundList || playlistMode || instrumentMode || !g.nIn || !g.driverName[0]) return;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int count = (int)soundList->audioCount, slot = -1;
+    for (int i = 0; i < count; i++)
+        if (!_stricmp(soundList->audio[i], g.driverName)) { slot = i; break; }
+    if (slot < 0 && count < AUDIO_MAX) {
+        strncpy(soundList->audio[count], g.driverName, MAX_PATH - 1);
+        soundList->audio[count][MAX_PATH - 1] = 0;
+        slot = count;
+        soundList->audioCount = count + 1;
+    }
+    if (slot >= 0) {
+        soundList->audioPid[slot] = GetCurrentProcessId();
+        soundList->audioBeat[slot] = (LONGLONG)GetTickCount64();
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+}
+
+static void withdraw_audio_device(void)
+{
+    open_sounds();
+    if (!soundList || !g.driverName[0]) return;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+    for (int i = 0; i < (int)soundList->audioCount; i++)
+        if ((DWORD)soundList->audioPid[i] == GetCurrentProcessId() && !_stricmp(soundList->audio[i], g.driverName))
+            soundList->audioPid[i] = 0;
+    InterlockedExchange(&soundList->lock, 0);
+}
+
 static int sound_mode(int number)
 {
     open_sounds();
@@ -3780,7 +3823,7 @@ static int sound_mode(int number)
     return MODE_AUDIO;
 }
 
-/* Whether a running instrument instance is playing a sound this stem collides with. */
+/* Whether a running instrument or audio device instance collides with this stem. */
 static int stem_muted(const wchar_t *file)
 {
     open_sounds();
@@ -3791,6 +3834,20 @@ static int stem_muted(const wchar_t *file)
     int number = _wtoi(key), mode = sound_mode(number);
 
     ULONGLONG now = GetTickCount64();
+    if (mode == MODE_AUDIO) {
+        wchar_t device[STEM_NAME];
+        stem_device(file, device, STEM_NAME);
+        for (int i = 0; i < (int)soundList->audioCount; i++) {
+            if (!soundList->audioPid[i] || now - (ULONGLONG)soundList->audioBeat[i] > 2000) continue;
+
+            wchar_t live[STEM_NAME];
+            MultiByteToWideChar(CP_ACP, 0, soundList->audio[i], -1, live, STEM_NAME);
+            live[STEM_NAME - 1] = 0;
+            if (same_audio_device(device, live)) return 1;
+        }
+        return 0;
+    }
+
     for (int i = 0; i < (int)soundList->instrumentCount; i++) {
         if (!soundList->pid[i] || now - (ULONGLONG)soundList->beat[i] > 2000) continue;
 
@@ -5486,6 +5543,7 @@ static void shutdown_monitor(void)
     recording_stop(0);
     rating_stop();
     withdraw_instrument();
+    withdraw_audio_device();
     clear_loop_cue();
     if (deviceEnumerator) {
         (*(EnumeratorVtbl **)deviceEnumerator)->Release(deviceEnumerator);
@@ -5940,6 +5998,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
             g.volume = read_master_volume();
             if (playlistMode) mute_stems();
             else if (instrumentMode) announce_instrument();
+            else announce_audio_device();
             rating_poll();
             draw_meters();
             lastDraw = now;
