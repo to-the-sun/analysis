@@ -406,10 +406,18 @@ holds several palettes):
   any leading trim.
 
 ```bash
-python3 song_builder.py --spec report-spec.json \
+bash song_builder.sh --spec report-spec.json \
   --report-dir artifacts/<batch>/pattern_reports \
   --archive 'downloads/[2026-11-12-19-7-9].zip'
 ```
+
+Run the builder through `song_builder.sh`, never `song_builder.py` directly: it
+restarts the builder until it exits cleanly, so a crash carries on instead of
+the song starting over. Each rating is written to `overlap_ratings.json` beside
+the report folder the moment it completes, keyed by the stems it rated and
+stamped with a fingerprint of the spec; a different spec discards the old
+ratings. After a killed session, run the same command again and let it finish,
+and never clear that file to restart.
 
 `--archive` is the zip the palette and passes were extracted from. Its stem names
 the master WAV and the link in `song.html`; omitting it writes
@@ -424,6 +432,7 @@ Output:
 ```
 artifacts/<batch>/
   <archive-stem>.wav
+  overlap_ratings.json
   pattern_reports/
     song.html
     [stems]/
