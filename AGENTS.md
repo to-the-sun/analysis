@@ -5,6 +5,8 @@ repo, not just the one that created this file.
 
 ## Communication 
 
+***Above all, make your responses SHORT.*** 
+
 - Be as concise, direct and to-the-point as possible.
 - Address all the concerns of the user but do so in the least words possible. This is not so much about using incomplete sentences but about not being redundant or verbose. Don't explain things that aren't directly relevant, have already been explained or could reasonably be assumed to already be understood by the user.
 - Use precise language. For example, if we've been discussing normalization, don't suddenly start calling the normalization "the divide". That's confusing. Our words are functional here, not poetic, and we're not going for high word count.
