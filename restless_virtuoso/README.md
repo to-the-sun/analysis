@@ -244,6 +244,7 @@ instance stops or changes sound.
 - Changing the sample rate or buffer size in the control panel reopens the buffers
   automatically.
 - The master output is scaled by the Windows master volume, re-read while running.
+- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
 - Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages and errors.

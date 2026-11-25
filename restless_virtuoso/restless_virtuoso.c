@@ -4582,6 +4582,32 @@ static float read_master_volume(void)
     return volume;
 }
 
+/* Auto gain brings a sound's loudest sample of the session to 1.0, so it plays back at
+   that level whether it came in hot or quiet. Each sound keeps its own peak; nothing is
+   written out, so every run starts again from 1.0. */
+static float soundPeaks[SOUND_MAX + 1], inputPeak, synthPeak;
+
+static void auto_gain(float *samples, int channels, int frames, float *peak)
+{
+    float highest = *peak;
+
+    for (int c = 0; c < channels; c++) {
+        const float *channel = samples + (size_t)c * frames;
+        for (int i = 0; i < frames; i++) {
+            float value = fabsf(channel[i]);
+            if (value > highest) highest = value;
+        }
+    }
+    *peak = highest;
+    if (highest <= 0.0f) return;
+
+    float gain = 1.0f / highest;
+    for (int c = 0; c < channels; c++) {
+        float *channel = samples + (size_t)c * frames;
+        for (int i = 0; i < frames; i++) channel[i] *= gain;
+    }
+}
+
 static void process_buffer(int32_t index)
 {
     const int frames = (int)g.bufferSize;
@@ -4602,14 +4628,19 @@ static void process_buffer(int32_t index)
         float held = g.peak[c] * 0.97f;
         g.peak[c] = peak > held ? peak : held;
     }
+    auto_gain(g.inputFloats, g.nIn, frames, &inputPeak);
 
     memset(g.synthFloats, 0, (size_t)frames * sizeof(float));
     if (g.synthEnabled || instrumentMode) drain_midi();
-    if (g.synthEnabled) synth_render(g.synthFloats, frames);
+    if (g.synthEnabled) {
+        synth_render(g.synthFloats, frames);
+        auto_gain(g.synthFloats, 1, frames, &synthPeak);
+    }
 
     if (playlistMode) render_playlist(g.fileFloats, g.nOut, frames);
     else if (instrumentMode) {
         render_instruments(g.fileFloats, g.nOut, frames);
+        auto_gain(g.fileFloats, g.nOut, frames, &soundPeaks[g.soundNumber]);
         taste_tick(frames);
     }
 
