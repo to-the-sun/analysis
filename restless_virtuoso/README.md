@@ -227,8 +227,8 @@ prints its name and how many stems are playing. A stem whose file has gone stops
 playing at that point and is named the same way, as `dropped`.
 
 Stems collide as their sounds' modes do: every drum sample set collides with every
-other, a VST preset only with the same sound number, and an `audio` take, which has no
-sound number, with every other `audio` take. A take whose active audio overlaps an
+other, a VST preset only with the same sound number, and an `audio` take only with
+another take of the same audio device. A take whose active audio overlaps an
 older stem it collides with deletes that file, and the stems instance drops it from
 the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
 the live instance is the only voice of that sound, and plays them again when that

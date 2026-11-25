@@ -1910,9 +1910,8 @@ static void recording_name(wchar_t *out, size_t size)
 
 /* A stem is one voice of the sound its name starts with, and voices collide by mode:
    every drum sample set with every other, a VST preset only with the same sound
-   number, and an `audio` take, which carries no sound number, with every other such
-   take. Two that collide cannot overlap in the song, so a new take deletes the one it
-   replaces. */
+   number, and an `audio` take with another take of the same audio device. Two that
+   collide cannot overlap in the song, so a new take deletes the one it replaces. */
 
 enum { MODE_AUDIO, MODE_SAMPLES, MODE_SYNTH };
 
@@ -1934,11 +1933,52 @@ static int stem_mode(const wchar_t *path)
     return sound_mode(_wtoi(key));
 }
 
+/* The device an audio take is named after, without its number or extension. */
+static void stem_device(const wchar_t *path, wchar_t *device, size_t size)
+{
+    const wchar_t *name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    while (*name >= L'0' && *name <= L'9') name++;
+    if (*name == L' ') name++;
+
+    const wchar_t *dot = wcsrchr(name, L'.');
+    size_t length = dot ? (size_t)(dot - name) : wcslen(name);
+    if (length >= size) length = size - 1;
+    wmemcpy(device, name, length);
+    device[length] = 0;
+}
+
+/* Two names of one device differ only by the number that keeps a repeated take's
+   file name unique, e.g. `MOTU 828` and `MOTU 828 2`. */
+static int same_audio_device(const wchar_t *a, const wchar_t *b)
+{
+    if (!_wcsicmp(a, b)) return 1;
+
+    const wchar_t *longer = a, *shorter = b;
+    if (wcslen(a) < wcslen(b)) {
+        longer = b;
+        shorter = a;
+    }
+
+    size_t length = wcslen(shorter);
+    if (wcsncmp(longer, shorter, length) || longer[length] != L' ') return 0;
+    for (const wchar_t *at = longer + length + 1; *at; at++)
+        if (*at < L'0' || *at > L'9') return 0;
+    return 1;
+}
+
 static int stems_collide(const wchar_t *a, const wchar_t *b)
 {
     int mode = stem_mode(a);
     if (mode != stem_mode(b)) return 0;
-    if (mode != MODE_SYNTH) return 1;
+    if (mode == MODE_SAMPLES) return 1;
+
+    if (mode == MODE_AUDIO) {
+        wchar_t deviceA[STEM_NAME], deviceB[STEM_NAME];
+        stem_device(a, deviceA, STEM_NAME);
+        stem_device(b, deviceB, STEM_NAME);
+        return same_audio_device(deviceA, deviceB);
+    }
 
     wchar_t keyA[16], keyB[16];
     stem_key(a, keyA, 16);
@@ -1947,13 +1987,14 @@ static int stems_collide(const wchar_t *a, const wchar_t *b)
 }
 
 /* Whether a stem's sound collides with a sound being played, as it does for
-   muting: every drum sample set with every other, a VST preset only with the same
-   sound number, and an `audio` take with every other. */
+   muting: every drum sample set with every other, and a VST preset only with the same
+   sound number. An audio take belongs to its device rather than to a sound number. */
 static int stem_sound_collides(const wchar_t *file, int sound)
 {
     int mode = stem_mode(file);
     if (sound_mode(sound) != mode) return 0;
-    if (mode != MODE_SYNTH) return 1;
+    if (mode == MODE_SAMPLES) return 1;
+    if (mode == MODE_AUDIO) return 0;
 
     wchar_t key[16];
     stem_key(file, key, 16);
