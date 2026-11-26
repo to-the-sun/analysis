@@ -1255,7 +1255,10 @@ static void take_finish(void)
         FILE *sounds = _wfopen(take.soundsPath, L"w");
         if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
         else {
-            if (!take.soundCount) fputs("0, 0.000000 audio;\n", sounds);
+            if (!take.soundCount) {
+                if (g.driverName[0]) fprintf(sounds, "0, 0.000000 %d %s;\n", g.inCh[0] + 1, g.driverName);
+                else fputs("0, 0.000000 audio;\n", sounds);
+            }
             else {
                 LARGE_INTEGER frequency;
                 QueryPerformanceFrequency(&frequency);
@@ -1893,7 +1896,7 @@ static void recording_name(wchar_t *out, size_t size)
         MultiByteToWideChar(CP_ACP, 0, g.driverName, -1, device, 128);
         for (wchar_t *p = device; *p; p++)
             if (wcschr(L"\\/:*?\"<>|", *p)) *p = L'-';
-        if (device[0]) swprintf(out, size, L"0 %ls", device);
+        if (device[0]) swprintf(out, size, L"%d %ls", g.inCh[0] + 1, device);
         else wcsncpy(out, L"audio", size - 1);
         out[size - 1] = 0;
         return;
@@ -1910,36 +1913,37 @@ static void recording_name(wchar_t *out, size_t size)
 
 /* A stem is one voice of the sound its name starts with, and voices collide by mode:
    every drum sample set with every other, a VST preset only with the same sound
-   number, and an `audio` take with another take of the same audio device. Two that
+   number, and an `audio` take with another take of the same device input. Two that
    collide cannot overlap in the song, so a new take deletes the one it replaces. */
 
 enum { MODE_AUDIO, MODE_SAMPLES, MODE_SYNTH };
 
-static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
+/* A stem starts with its number and a name: a sound's number and description, or an
+   audio take's input channel and device. */
+static int stem_parts(const wchar_t *path, const wchar_t **name)
 {
-    const wchar_t *name = wcsrchr(path, L'\\');
-    name = name ? name + 1 : path;
+    const wchar_t *at = wcsrchr(path, L'\\');
+    at = at ? at + 1 : path;
 
-    size_t length = 0;
-    while (length + 1 < size && name[length] >= L'0' && name[length] <= L'9') length++;
-    wmemcpy(key, name, length);
-    key[length] = 0;
+    int number = 0;
+    while (*at >= L'0' && *at <= L'9') number = number * 10 + (*at++ - L'0');
+    if (*at == L' ') at++;
+    *name = at;
+    return number;
 }
 
-static int stem_mode(const wchar_t *path)
+static int kind_mode(const wchar_t *name)
 {
-    wchar_t key[16];
-    stem_key(path, key, 16);
-    return sound_mode(_wtoi(key));
+    if (wcsstr(name, L" drum samples")) return MODE_SAMPLES;
+    if (!wcsncmp(name, L"VST ", 4)) return MODE_SYNTH;
+    return MODE_AUDIO;
 }
 
-/* The device an audio take is named after, without its number or extension. */
+/* The device an audio take is named after, without its channel or extension. */
 static void stem_device(const wchar_t *path, wchar_t *device, size_t size)
 {
-    const wchar_t *name = wcsrchr(path, L'\\');
-    name = name ? name + 1 : path;
-    while (*name >= L'0' && *name <= L'9') name++;
-    if (*name == L' ') name++;
+    const wchar_t *name;
+    stem_parts(path, &name);
 
     const wchar_t *dot = wcsrchr(name, L'.');
     size_t length = dot ? (size_t)(dot - name) : wcslen(name);
@@ -1969,21 +1973,18 @@ static int same_audio_device(const wchar_t *a, const wchar_t *b)
 
 static int stems_collide(const wchar_t *a, const wchar_t *b)
 {
-    int mode = stem_mode(a);
-    if (mode != stem_mode(b)) return 0;
+    const wchar_t *nameA, *nameB;
+    int numberA = stem_parts(a, &nameA), numberB = stem_parts(b, &nameB);
+    int mode = kind_mode(nameA);
+    if (mode != kind_mode(nameB)) return 0;
     if (mode == MODE_SAMPLES) return 1;
+    if (numberA != numberB) return 0;
+    if (mode == MODE_SYNTH) return 1;
 
-    if (mode == MODE_AUDIO) {
-        wchar_t deviceA[STEM_NAME], deviceB[STEM_NAME];
-        stem_device(a, deviceA, STEM_NAME);
-        stem_device(b, deviceB, STEM_NAME);
-        return same_audio_device(deviceA, deviceB);
-    }
-
-    wchar_t keyA[16], keyB[16];
-    stem_key(a, keyA, 16);
-    stem_key(b, keyB, 16);
-    return !wcscmp(keyA, keyB);
+    wchar_t deviceA[STEM_NAME], deviceB[STEM_NAME];
+    stem_device(a, deviceA, STEM_NAME);
+    stem_device(b, deviceB, STEM_NAME);
+    return same_audio_device(deviceA, deviceB);
 }
 
 /* Whether a stem's sound collides with a sound being played, as it does for
@@ -1991,14 +1992,12 @@ static int stems_collide(const wchar_t *a, const wchar_t *b)
    sound number. An audio take belongs to its device rather than to a sound number. */
 static int stem_sound_collides(const wchar_t *file, int sound)
 {
-    int mode = stem_mode(file);
+    const wchar_t *name;
+    int number = stem_parts(file, &name), mode = kind_mode(name);
     if (sound_mode(sound) != mode) return 0;
     if (mode == MODE_SAMPLES) return 1;
     if (mode == MODE_AUDIO) return 0;
-
-    wchar_t key[16];
-    stem_key(file, key, 16);
-    return _wtoi(key) == sound;
+    return number == sound;
 }
 
 static int active_span(const Track *track, double *begin, double *end)
@@ -3672,6 +3671,7 @@ typedef struct {
     volatile LONGLONG beat[INSTRUMENT_MAX];
     volatile LONG audioCount;
     char audio[AUDIO_MAX][MAX_PATH];
+    volatile LONG audioChannel[AUDIO_MAX];
     volatile LONG audioPid[AUDIO_MAX];
     volatile LONGLONG audioBeat[AUDIO_MAX];
 } SoundList;
@@ -3770,8 +3770,9 @@ static void withdraw_instrument(void)
     if (slot >= 0) soundList->pid[slot] = 0;
 }
 
-/* A running audio device leaves its driver name and a heartbeat, so a stems instance
-   mutes only the takes that device itself recorded and lets other devices' play. */
+/* A running audio device leaves its driver name, input channel and a heartbeat, so a
+   stems instance mutes only the takes that device input itself recorded and lets the
+   other devices' and inputs' play. */
 static void announce_audio_device(void)
 {
     open_sounds();
@@ -3779,12 +3780,14 @@ static void announce_audio_device(void)
 
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
 
+    int channel = g.inCh[0] + 1;
     int count = (int)soundList->audioCount, slot = -1;
     for (int i = 0; i < count; i++)
-        if (!_stricmp(soundList->audio[i], g.driverName)) { slot = i; break; }
+        if ((int)soundList->audioChannel[i] == channel && !_stricmp(soundList->audio[i], g.driverName)) { slot = i; break; }
     if (slot < 0 && count < AUDIO_MAX) {
         strncpy(soundList->audio[count], g.driverName, MAX_PATH - 1);
         soundList->audio[count][MAX_PATH - 1] = 0;
+        soundList->audioChannel[count] = channel;
         slot = count;
         soundList->audioCount = count + 1;
     }
@@ -3803,7 +3806,8 @@ static void withdraw_audio_device(void)
 
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
     for (int i = 0; i < (int)soundList->audioCount; i++)
-        if ((DWORD)soundList->audioPid[i] == GetCurrentProcessId() && !_stricmp(soundList->audio[i], g.driverName))
+        if ((DWORD)soundList->audioPid[i] == GetCurrentProcessId() &&
+            (int)soundList->audioChannel[i] == g.inCh[0] + 1 && !_stricmp(soundList->audio[i], g.driverName))
             soundList->audioPid[i] = 0;
     InterlockedExchange(&soundList->lock, 0);
 }
@@ -3827,9 +3831,8 @@ static int stem_muted(const wchar_t *file)
     open_sounds();
     if (!soundList) return 0;
 
-    wchar_t key[16];
-    stem_key(file, key, 16);
-    int number = _wtoi(key), mode = sound_mode(number);
+    const wchar_t *name;
+    int number = stem_parts(file, &name), mode = kind_mode(name);
 
     ULONGLONG now = GetTickCount64();
     if (mode == MODE_AUDIO) {
@@ -3837,6 +3840,7 @@ static int stem_muted(const wchar_t *file)
         stem_device(file, device, STEM_NAME);
         for (int i = 0; i < (int)soundList->audioCount; i++) {
             if (!soundList->audioPid[i] || now - (ULONGLONG)soundList->audioBeat[i] > 2000) continue;
+            if ((int)soundList->audioChannel[i] != number) continue;
 
             wchar_t live[STEM_NAME];
             MultiByteToWideChar(CP_ACP, 0, soundList->audio[i], -1, live, STEM_NAME);

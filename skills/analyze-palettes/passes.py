@@ -8,8 +8,9 @@ and its lead-in is the pattern start minus that pass's loop point plus the pad.
 A sounds file, when present, holds one line per sound change,
 ``index, milliseconds number mode;``, where number names a drum set or VST
 preset and mode is ``samples`` or ``synth``; an older file may give the number
-alone, leaving mode unknown. A line with no number,
-``index, milliseconds audio;``, marks a device that applies no sound.
+alone, leaving mode unknown. An audio device gives its input channel as the
+number and its name as the mode, e.g. ``0, 0.000000 1 MOTU 828;``; an older file
+reads ``index, milliseconds audio;`` and names no device.
 """
 import os
 
@@ -99,9 +100,11 @@ def parse_sounds(path):
             except ValueError:
                 continue
             try:
-                number, mode = int(parts[2]), (parts[3].lower() if len(parts) > 3 else None)
+                number = int(parts[2])
             except ValueError:
-                number, mode = None, parts[2].lower()
+                number, mode = None, ' '.join(parts[2:])
+            else:
+                mode = ' '.join(parts[3:]) or None
             marks.append({'index': index, 'time': time, 'number': number, 'mode': mode})
     marks.sort(key=lambda m: (m['time'], m['index']))
     return marks

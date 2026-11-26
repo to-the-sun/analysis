@@ -266,7 +266,7 @@ def marks(path):
         if len(parts) < 3:
             continue
         try:
-            out.append((float(parts[1]) / 1000, " ".join(parts[2:4])))
+            out.append((float(parts[1]) / 1000, " ".join(parts[2:])))
         except ValueError:
             continue
     return sorted(out)
