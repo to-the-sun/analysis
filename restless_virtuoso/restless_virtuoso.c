@@ -45,7 +45,7 @@
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
     char instrument[MAX_PATH], samplesPath[MAX_PATH], vstsPath[MAX_PATH];
-    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale;
+    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale, archive;
 } Options;
 
 typedef struct {
@@ -992,14 +992,14 @@ static void log_playlist(const char *event, double position)
 
 static void archive_stems(const wchar_t *folder);
 
-static int start_playlist_w(const wchar_t *folder)
+static int start_playlist_w(const wchar_t *folder, int archive)
 {
     wchar_t *path = long_path(folder);
     if (!path) {
         log_error("Could not resolve the folder path.\n");
         return -1;
     }
-    archive_stems(path);
+    if (archive) archive_stems(path);
     if (scan_audio_files(path) <= 0) {
         log_error("Could not find any audio files in '%ls'.\n", path);
         free(path);
@@ -1029,14 +1029,14 @@ static int start_playlist_w(const wchar_t *folder)
     return 0;
 }
 
-static int start_playlist(const char *folder)
+static int start_playlist(const char *folder, int archive)
 {
     wchar_t *path = widen(folder);
     if (!path) {
         log_error("Could not convert the folder path.\n");
         return -1;
     }
-    int result = start_playlist_w(path);
+    int result = start_playlist_w(path, archive);
     free(path);
     return result;
 }
@@ -1913,11 +1913,12 @@ static void make_folders(const wchar_t *path)
     CreateDirectoryW(buffer, NULL);
 }
 
-static int spawn_stems(const wchar_t *folder)
+static int spawn_stems(const wchar_t *folder, int archive)
 {
     wchar_t exe[MAX_PATH], command[2048 + MAX_PATH];
     if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return 0;
-    swprintf(command, sizeof command / sizeof *command, L"\"%ls\" \"%ls\"", exe, folder);
+    swprintf(command, sizeof command / sizeof *command, archive ? L"\"%ls\" \"%ls\"" : L"\"%ls\" \"%ls\" --no-archive",
+             exe, folder);
 
     STARTUPINFOW info;
     PROCESS_INFORMATION process;
@@ -1954,7 +1955,7 @@ static int spawn_random_stems(void)
     } while (FindNextFileW(find, &entry));
     FindClose(find);
 
-    return count && spawn_stems(pick);
+    return count && spawn_stems(pick, 1);
 }
 
 static int spawned_stems_alive(void)
@@ -2306,7 +2307,7 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
 
     log_trace("recorded %ls\n", path);
     if (!shared) {
-        spawn_stems(folder);
+        spawn_stems(folder, 0);
         return;
     }
 
@@ -6092,6 +6093,7 @@ static int parse_args(int argc, char **argv, Options *options)
         if (!strcmp(argument, "--list") || !strcmp(argument, "-l")) options->list = 1;
         else if (!strcmp(argument, "--help") || !strcmp(argument, "-h")) { usage(); return 2; }
         else if (!strcmp(argument, "--no-synth")) options->synth = 0;
+        else if (!strcmp(argument, "--no-archive")) options->archive = 0;
         else if (!strcmp(argument, "--driver") || !strcmp(argument, "-d")) {
             if (!hasValue) return 1;
             options->driver = argv[++i];
@@ -6141,6 +6143,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     Options options;
     memset(&options, 0, sizeof options);
     options.synth = 1;
+    options.archive = 1;
 
     const char *settings = !folder && argc > 1 && is_json_path(argv[1]) ? argv[1] : NULL;
     if (settings && load_settings(settings, &options) != 0) return 1;
@@ -6177,11 +6180,11 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (folder) {
         playlistMode = 1;
-        if (start_playlist_w(folder) != 0) return 1;
+        if (start_playlist_w(folder, options.archive) != 0) return 1;
     } else if (options.instrument[0]) {
         if (is_folder(options.instrument)) {
             playlistMode = 1;
-            if (start_playlist(options.instrument) != 0) return 1;
+            if (start_playlist(options.instrument, options.archive) != 0) return 1;
         } else if (resolve_driver(options.instrument, names, driverCount)) {
             if (!options.driver) options.driver = options.instrument;
         } else if (resolve_midi_in(options.instrument) >= 0) {

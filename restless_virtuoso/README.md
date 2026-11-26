@@ -137,7 +137,9 @@ folder beside the stems folder, named after the master mix, e.g.
 `song.json` and the master mix from the project folder, plus the copy of it in
 `D:\[Library]\[Audio]\[Works]` under `[Works]` when that exists. An archive already
 there under that name is replaced, so it always holds the state the instance started
-from.
+from. Only a stems instance started from the exe itself, by a double-click or a stems
+folder dropped onto it, archives; the one an instrument instance starts for a new
+project's first take does not.
 
 ## Loop recordings
 
