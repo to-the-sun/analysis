@@ -1910,10 +1910,10 @@ static void make_folders(const wchar_t *path)
     CreateDirectoryW(buffer, NULL);
 }
 
-static void spawn_stems(const wchar_t *folder)
+static int spawn_stems(const wchar_t *folder)
 {
     wchar_t exe[MAX_PATH], command[2048 + MAX_PATH];
-    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return;
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return 0;
     swprintf(command, sizeof command / sizeof *command, L"\"%ls\" \"%ls\"", exe, folder);
 
     STARTUPINFOW info;
@@ -1922,13 +1922,36 @@ static void spawn_stems(const wchar_t *folder)
     info.cb = sizeof info;
     if (!CreateProcessW(exe, command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &info, &process)) {
         log_error("Could not start a stems instance for '%ls' (error %lu).\n", folder, GetLastError());
-        return;
+        return 0;
     }
 
     if (spawnedStems) CloseHandle(spawnedStems);
     spawnedStems = process.hProcess;
     CloseHandle(process.hThread);
     log_trace("started stems instance %lu on '%ls'\n", (unsigned long)process.dwProcessId, folder);
+    return 1;
+}
+
+/* A bare double-click opens the stems of one of the projects at random. The projects
+   are drawn as the scan goes, so no list is kept. */
+static int spawn_random_stems(void)
+{
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(RATING_PROJECTS L"\\*", &entry);
+    if (find == INVALID_HANDLE_VALUE) return 0;
+
+    wchar_t stems[1200], pick[1200];
+    int count = 0;
+    do {
+        if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L"..")) continue;
+        swprintf(stems, 1200, L"%ls\\%ls\\[stems]", RATING_PROJECTS, entry.cFileName);
+        if (!is_folder_w(stems)) continue;
+        if (rand() % ++count == 0) wcscpy(pick, stems);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+
+    return count && spawn_stems(pick);
 }
 
 static int spawned_stems_alive(void)
@@ -6173,6 +6196,11 @@ int main(int argc, char **argv)
     open_error_log();
     capture_plugins();
     srand((unsigned)GetTickCount64());
+    if (argc == 1 && spawn_random_stems()) {
+        if (errorLog) fclose(errorLog);
+        return 0;
+    }
+
     wchar_t *folder = dropped_folder();
     int exitCode = run(argc - (folder ? 1 : 0), argv + (folder ? 1 : 0), folder);
     if (quitEvent) SetEvent(quitEvent);
