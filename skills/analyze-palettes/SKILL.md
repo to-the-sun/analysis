@@ -8,7 +8,9 @@ Use this skill when the user gives one or more palette recordings and wants:
   segment rows, zooming, playback and playhead jumping;
 - a song assembled from the patterns, with a mastered WAV and one WAV per
   pattern stem, plus a player page with per-stem arrangement waveforms;
-- the reports, song and audio packaged for download.
+- a complete self-similarity (SSM) report over every palette of the archive,
+  built with `analysis/ssm_report.py`;
+- the reports, song, audio and SSM report packaged for download.
 
 The goal is a reproducible analysis, not a black-box detector. Report what is
 measured, what is estimated, and where the uncertainty is.
@@ -477,7 +479,46 @@ Song-level checks:
 - [ ] A deep zoom loads a finer `a*.js` level and Reset Zoom restores the view.
 - [ ] Click-to-seek starts playback; mute toggles one stem.
 
-## 4. Memory-safe waveform design
+## 4. Self-similarity report
+
+Every palette gets a self-similarity report, and the processed zip is incomplete
+without it. This is required for every batch, not a finishing touch.
+
+Run the project's own script on the folder holding the palettes:
+
+```bash
+python3 analysis/ssm_report.py artifacts/<batch>/pattern_reports/\[palettes\]
+```
+
+It writes `ssm_report/index.html` and one PNG per stretch into that folder, and
+prints one line per stretch: its span, its length and its lag peak (or
+`no period`). Run it once, on the whole `[palettes]/` folder, after
+`pattern_report_builder.py` has written every palette of the archive, so one page
+covers all of them.
+
+- Each palette is split on its `sounds_*.txt` marks, and each stretch between
+  two sound changes becomes its own matrix plus lag curve; without a sounds file
+  the whole palette is one stretch.
+- Stretches shorter than 2 s or quieter than −50 dBFS are listed on the page as
+  not shown, not dropped silently.
+- The page plays the WAV beside the report folder (`../<palette>.wav`), which is
+  why the folder must stay inside the packaged `pattern_reports/`. Do not run it
+  on the extracted source: those WAVs are not in the zip, so nothing would play.
+
+Use it as a cross-check on the loop lengths: an SSM lag peak that disagrees with
+a measured loop by more than a few tens of milliseconds is worth re-measuring.
+Where they disagree, keep the measured pattern and say so in the report table.
+
+Checks:
+
+- [ ] Every palette of the archive has its own section on the page.
+- [ ] Every audible stretch has a PNG and a lag peak or a stated `no period`.
+- [ ] The page loads and plays each palette from the packaged folder.
+
+The `ssm_report/` folder ships inside `pattern_reports/` with the rest of the
+batch. Do not hand-edit the page, the PNGs or the printed numbers.
+
+## 5. Memory-safe waveform design
 
 Do **not** inline the whole PCM or a dense waveform in the HTML. The report
 uses a coarse resident tier plus on-demand min/max chunks:
@@ -496,7 +537,7 @@ uses a coarse resident tier plus on-demand min/max chunks:
 Keep this invariant when modifying the report. A full view must remain usable
 with only `summary.js`.
 
-## 5. Interaction requirements
+## 6. Interaction requirements
 
 The report must provide:
 
@@ -535,7 +576,7 @@ curl -s -D - -o /dev/null -H 'Range: bytes=0-99' \
 
 Expect `206` and `Content-Range`.
 
-## 6. Validation checklist
+## 7. Validation checklist
 
 Builder-level:
 
@@ -567,6 +608,8 @@ Builder-level:
       its arrangement data.
 - [ ] No pattern region was reduced to a handful of bars to raise its mean
       similarity.
+- [ ] `[palettes]/ssm_report/index.html` exists, has a section for every
+      palette of the archive, and every figure beside it resolves.
 
 Browser-level, when a browser is available:
 
@@ -583,7 +626,7 @@ If the browser automation wrapper errors, use the available DOM/evaluate and
 click tools instead of claiming the interaction was tested. A screenshot is
 not proof of playback or seeking.
 
-## 7. Packaging
+## 8. Packaging
 
 ```bash
 cd artifacts/<batch>
@@ -596,12 +639,16 @@ The archive root holds the master WAV beside the `pattern_reports/` folder.
 Include the index, all HTML reports, the generated `[palettes]/` WAVs, passes
 and sounds files, the `[data]/` chunks and audio copies, and when a song was built,
 `song.html` plus
-`[stems]/` (stems and `[stems]/[data]/`). Several palettes change none of this:
+`[stems]/` (stems and `[stems]/[data]/`). The complete SSM report travels with
+them, as `pattern_reports/[palettes]/ssm_report/` with its `index.html` and every
+PNG; the zip command below already takes it because it packages
+`pattern_reports/` whole. Confirm `ssm_report/index.html` and all of its images
+are in the listing before uploading. Several palettes change none of this:
 they share the folder and the one master. Package each archive's batch
 separately when the folder held more than one archive. Do not include the zip
 inside itself. Report the final size and entry count.
 
-### 7a. Upload it
+### 8a. Upload it
 
 ```bash
 python3 drive_upload.py analyze-palettes.zip --name '<archive-stem>-analyze-palettes.zip'
@@ -615,7 +662,7 @@ out of the repo, the spec and any command line. With the three variables absent
 it prints `UPLOAD SKIPPED` and the batch still counts as packaged. Never upload
 into `[palettes]`: step 0 treats every zip there as a new batch.
 
-## 8. Worked example
+## 9. Worked example
 
 **`palette_2026-11-10-18-16-29.wav`**, 609.10 s mono 44.1 kHz, with 29 passes.
 The silence sections are 1.00–60.10, 69.10–182.10, 184.00–289.70, 291.80–293.30
@@ -640,7 +687,7 @@ shift, so all their patterns land on the same song anchor. The song is
 sum to the master with 0 LSB, and each stem is silent before its entry and after
 its region.
 
-## 9. Pitfalls and lessons
+## 10. Pitfalls and lessons
 
 - An archive with several palettes still makes one song. Do not build a song
   per palette, and do not keep one palette and discard the rest.
@@ -692,5 +739,7 @@ its region.
   not by report order. Do not go back to keeping whichever came first.
 - A song may not repeat a pattern to fill time or gate one out of part of the
   song: that stops it being heard whole.
+- The SSM report is part of the submission. A zip without
+  `pattern_reports/[palettes]/ssm_report/` is not finished.
 - Keep the zip out of itself. Re-run the zip after adding a download link if
   the link target must be inside the served folder.
