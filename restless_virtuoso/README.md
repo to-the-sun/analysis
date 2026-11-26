@@ -147,8 +147,10 @@ records one `index, milliseconds number mode;` line for the sound it started wit
 each `new sound`, timed from the take's start; `mode` is `samples` for a drum sample
 set and `synth` for a VST preset. Every running instance shares one numbered list of
 sounds, so a number identifies a drum sample set or VST preset in every take, and the
-console prints the number with the description. A take with no sound applied holds
-the single line `0, 0.000000 audio;`.
+console prints the number with the description. A drawn sound always takes the next
+number, even when its preset is already in the list, so a draw never jumps back to an
+older sound. A take with no sound applied gives its input channel as the number and
+its audio device as the mode, e.g. `0, 0.000000 1 Focusrite USB ASIO;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
@@ -206,7 +208,8 @@ With no stems instance running it records while its own rating is above zero, an
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
 `restless_virtuoso.exe` is started on that folder. A take is named after the sound that
-played it, e.g. `3 16 drum samples.wav`, and one recorded while a stems instance runs is
+played it, e.g. `3 16 drum samples.wav`, or after its input channel and audio device
+when it has no sound, e.g. `1 Focusrite USB ASIO.wav`, and one recorded while a stems instance runs is
 placed from the loop point of the pass it overlaps most, as the song builder places a
 pattern in its pass, so the audio lands where it was played in the song. That placement
 is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
@@ -226,12 +229,13 @@ prints its name and how many stems are playing. A stem whose file has gone stops
 playing at that point and is named the same way, as `dropped`.
 
 Stems collide as their sounds' modes do: every drum sample set collides with every
-other, a VST preset only with the same sound number, and an `audio` take, which has no
-sound number, with every other `audio` take. A take whose active audio overlaps an
+other, a VST preset only with the same sound number, and an `audio` take only with
+another take of the same device input. A take whose active audio overlaps an
 older stem it collides with deletes that file, and the stems instance drops it from
 the loop. For the same reason a stems instance mutes every stem a sound an instrument instance is playing collides with, so
 the live instance is the only voice of that sound, and plays them again when that
-instance stops or changes sound.
+instance stops or changes sound. A running audio device does the same for the stems
+recorded from its own input, and leaves the other devices' and inputs' stems playing.
 
 ## Notes
 
@@ -244,7 +248,8 @@ instance stops or changes sound.
 - Changing the sample rate or buffer size in the control panel reopens the buffers
   automatically.
 - The master output is scaled by the Windows master volume, re-read while running.
+- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
-- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages and errors.
+- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors.
 - At startup, the program's logs older than 7 days are moved to the Recycle Bin.

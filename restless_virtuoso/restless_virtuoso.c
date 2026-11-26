@@ -1255,7 +1255,10 @@ static void take_finish(void)
         FILE *sounds = _wfopen(take.soundsPath, L"w");
         if (!sounds) log_error("Could not write '%ls'.\n", take.soundsPath);
         else {
-            if (!take.soundCount) fputs("0, 0.000000 audio;\n", sounds);
+            if (!take.soundCount) {
+                if (g.driverName[0]) fprintf(sounds, "0, 0.000000 %d %s;\n", g.inCh[0] + 1, g.driverName);
+                else fputs("0, 0.000000 audio;\n", sounds);
+            }
             else {
                 LARGE_INTEGER frequency;
                 QueryPerformanceFrequency(&frequency);
@@ -1883,12 +1886,18 @@ static int write_wav(const wchar_t *path, TakeChunk *first, drwav_uint64 frames,
     return 1;
 }
 
-/* The take is named after the sound that played it. */
+/* The take is named after the sound that played it, or after the audio device that
+   played one with no sound, so two devices' takes in one song can be told apart. */
 static void recording_name(wchar_t *out, size_t size)
 {
     out[0] = 0;
     if (!recording.number || !recording.sound[0]) {
-        wcsncpy(out, L"audio", size - 1);
+        wchar_t device[128] = L"";
+        MultiByteToWideChar(CP_ACP, 0, g.driverName, -1, device, 128);
+        for (wchar_t *p = device; *p; p++)
+            if (wcschr(L"\\/:*?\"<>|", *p)) *p = L'-';
+        if (device[0]) swprintf(out, size, L"%d %ls", g.inCh[0] + 1, device);
+        else wcsncpy(out, L"audio", size - 1);
         out[size - 1] = 0;
         return;
     }
@@ -1904,54 +1913,91 @@ static void recording_name(wchar_t *out, size_t size)
 
 /* A stem is one voice of the sound its name starts with, and voices collide by mode:
    every drum sample set with every other, a VST preset only with the same sound
-   number, and an `audio` take, which carries no sound number, with every other such
-   take. Two that collide cannot overlap in the song, so a new take deletes the one it
-   replaces. */
+   number, and an `audio` take with another take of the same device input. Two that
+   collide cannot overlap in the song, so a new take deletes the one it replaces. */
 
 enum { MODE_AUDIO, MODE_SAMPLES, MODE_SYNTH };
 
-static void stem_key(const wchar_t *path, wchar_t *key, size_t size)
+/* A stem starts with its number and a name: a sound's number and description, or an
+   audio take's input channel and device. */
+static int stem_parts(const wchar_t *path, const wchar_t **name)
 {
-    const wchar_t *name = wcsrchr(path, L'\\');
-    name = name ? name + 1 : path;
+    const wchar_t *at = wcsrchr(path, L'\\');
+    at = at ? at + 1 : path;
 
-    size_t length = 0;
-    while (length + 1 < size && name[length] >= L'0' && name[length] <= L'9') length++;
-    wmemcpy(key, name, length);
-    key[length] = 0;
+    int number = 0;
+    while (*at >= L'0' && *at <= L'9') number = number * 10 + (*at++ - L'0');
+    if (*at == L' ') at++;
+    *name = at;
+    return number;
 }
 
-static int stem_mode(const wchar_t *path)
+static int kind_mode(const wchar_t *name)
 {
-    wchar_t key[16];
-    stem_key(path, key, 16);
-    return sound_mode(_wtoi(key));
+    if (wcsstr(name, L" drum samples")) return MODE_SAMPLES;
+    if (!wcsncmp(name, L"VST ", 4)) return MODE_SYNTH;
+    return MODE_AUDIO;
+}
+
+/* The device an audio take is named after, without its channel or extension. */
+static void stem_device(const wchar_t *path, wchar_t *device, size_t size)
+{
+    const wchar_t *name;
+    stem_parts(path, &name);
+
+    const wchar_t *dot = wcsrchr(name, L'.');
+    size_t length = dot ? (size_t)(dot - name) : wcslen(name);
+    if (length >= size) length = size - 1;
+    wmemcpy(device, name, length);
+    device[length] = 0;
+}
+
+/* Two names of one device differ only by the number that keeps a repeated take's
+   file name unique, e.g. `MOTU 828` and `MOTU 828 2`. */
+static int same_audio_device(const wchar_t *a, const wchar_t *b)
+{
+    if (!_wcsicmp(a, b)) return 1;
+
+    const wchar_t *longer = a, *shorter = b;
+    if (wcslen(a) < wcslen(b)) {
+        longer = b;
+        shorter = a;
+    }
+
+    size_t length = wcslen(shorter);
+    if (wcsncmp(longer, shorter, length) || longer[length] != L' ') return 0;
+    for (const wchar_t *at = longer + length + 1; *at; at++)
+        if (*at < L'0' || *at > L'9') return 0;
+    return 1;
 }
 
 static int stems_collide(const wchar_t *a, const wchar_t *b)
 {
-    int mode = stem_mode(a);
-    if (mode != stem_mode(b)) return 0;
-    if (mode != MODE_SYNTH) return 1;
+    const wchar_t *nameA, *nameB;
+    int numberA = stem_parts(a, &nameA), numberB = stem_parts(b, &nameB);
+    int mode = kind_mode(nameA);
+    if (mode != kind_mode(nameB)) return 0;
+    if (mode == MODE_SAMPLES) return 1;
+    if (numberA != numberB) return 0;
+    if (mode == MODE_SYNTH) return 1;
 
-    wchar_t keyA[16], keyB[16];
-    stem_key(a, keyA, 16);
-    stem_key(b, keyB, 16);
-    return !wcscmp(keyA, keyB);
+    wchar_t deviceA[STEM_NAME], deviceB[STEM_NAME];
+    stem_device(a, deviceA, STEM_NAME);
+    stem_device(b, deviceB, STEM_NAME);
+    return same_audio_device(deviceA, deviceB);
 }
 
 /* Whether a stem's sound collides with a sound being played, as it does for
-   muting: every drum sample set with every other, a VST preset only with the same
-   sound number, and an `audio` take with every other. */
+   muting: every drum sample set with every other, and a VST preset only with the same
+   sound number. An audio take belongs to its device rather than to a sound number. */
 static int stem_sound_collides(const wchar_t *file, int sound)
 {
-    int mode = stem_mode(file);
+    const wchar_t *name;
+    int number = stem_parts(file, &name), mode = kind_mode(name);
     if (sound_mode(sound) != mode) return 0;
-    if (mode != MODE_SYNTH) return 1;
-
-    wchar_t key[16];
-    stem_key(file, key, 16);
-    return _wtoi(key) == sound;
+    if (mode == MODE_SAMPLES) return 1;
+    if (mode == MODE_AUDIO) return 0;
+    return number == sound;
 }
 
 static int active_span(const Track *track, double *begin, double *end)
@@ -2708,35 +2754,74 @@ static VstStats *find_vst_stats(const char *name, const char *file)
 static float *vstZeros, *vstOutputMemory;
 static float **vstInputs, **vstOutputs;
 
+static double vst_log_time(void);
+
+static const char *host_opcode_name(int32_t opcode)
+{
+    switch (opcode) {
+    case audioMasterVersion: return "version";
+    case audioMasterGetSampleRate: return "getSampleRate";
+    case audioMasterGetBlockSize: return "getBlockSize";
+    case audioMasterGetCurrentProcessLevel: return "getCurrentProcessLevel";
+    case audioMasterGetVendorString: return "getVendorString";
+    case audioMasterGetProductString: return "getProductString";
+    case audioMasterGetVendorVersion: return "getVendorVersion";
+    default: return NULL;
+    }
+}
+
+/* The first call of each opcode is logged with what the host answered. A plugin that
+   prints a complaint to the console is usually asking the host for something here, so
+   an unhandled opcode in the log names the reason. */
 static intptr_t host_callback(AEffect *effect, int32_t opcode, int32_t index, intptr_t value,
                               void *ptr, float opt)
 {
-    (void)effect;
     (void)index;
     (void)value;
     (void)opt;
 
+    intptr_t result;
     switch (opcode) {
-    case audioMasterVersion: return 2400;
-    case audioMasterGetSampleRate: return (intptr_t)g.rate;
-    case audioMasterGetBlockSize: return g.bufferSize;
-    case audioMasterGetCurrentProcessLevel: return 2;
-    case audioMasterGetVendorVersion: return 1;
+    case audioMasterVersion: result = 2400; break;
+    case audioMasterGetSampleRate: result = (intptr_t)g.rate; break;
+    case audioMasterGetBlockSize: result = g.bufferSize; break;
+    case audioMasterGetCurrentProcessLevel: result = 2; break;
+    case audioMasterGetVendorVersion: result = 1; break;
     case audioMasterGetVendorString:
     case audioMasterGetProductString:
         if (ptr) strcpy((char *)ptr, "restless_virtuoso");
-        return 1;
-    default: return 0;
+        result = 1;
+        break;
+    default: result = 0;
     }
+
+    static unsigned char logged[256], loggedOther;
+    int known = opcode >= 0 && opcode < 256;
+    int first = known ? !logged[opcode] : !loggedOther;
+    if (known) logged[opcode] = 1;
+    else loggedOther = 1;
+    if (first) {
+        const char *name = host_opcode_name(opcode);
+        log_trace("[%9.3f] thread %lu host callback for %p, opcode %d %s%s -> %lld\n",
+                  vst_log_time(), GetCurrentThreadId(), (void *)effect, opcode,
+                  name ? name : "unhandled", name ? "" : " (answered 0)", (long long)result);
+    }
+    return result;
 }
 
 static AEffect *create_effect(HMODULE library)
 {
+    char module[MAX_PATH] = "";
+    GetModuleFileNameA(library, module, MAX_PATH);
+
     AEffect *(*entry)(VstHostCallbackProc) = (void *)GetProcAddress(library, "VSTPluginMain");
     if (!entry) entry = (void *)GetProcAddress(library, "main");
     if (!entry) return NULL;
 
+    log_trace("[%9.3f] thread %lu creating plugin from '%s'\n", vst_log_time(), GetCurrentThreadId(), module);
     AEffect *effect = entry(host_callback);
+    log_trace("[%9.3f] thread %lu plugin from '%s' %s\n", vst_log_time(), GetCurrentThreadId(), module,
+              effect && effect->magic == kVstEffectMagic ? "created" : "refused to start");
     if (!effect || effect->magic != kVstEffectMagic) return NULL;
     return effect;
 }
@@ -3421,6 +3506,25 @@ static void render_vst(float *dst, int outputs, int frames)
     if (!vstEffect) return;
     if (vstChanging) vstProcessedWhileChanging = 1;
 
+    /* Processing is logged when it starts and whenever it comes back after a gap, so a
+       message the plugin prints on the console can be placed beside the audio state it
+       saw at that moment. */
+    static AEffect *processed;
+    static double lastProcess;
+    double now = vst_log_time();
+    if (vstEffect != processed) {
+        log_trace("[%9.3f] thread %lu processing starts: plugin %p, inputs %d outputs %d, flags 0x%x, "
+                  "%s, sound %d, %d frames at %.0f Hz\n", now, GetCurrentThreadId(), (void *)vstEffect,
+                  vstEffect->numInputs, vstEffect->numOutputs, (unsigned)vstEffect->flags,
+                  vstEffect->processReplacing ? "processReplacing" : "process", g.soundNumber,
+                  frames, g.rate);
+        processed = vstEffect;
+    } else if (lastProcess && now - lastProcess > 100.0) {
+        log_trace("[%9.3f] thread %lu processing resumes after %.0f ms on plugin %p, sound %d\n",
+                  now, GetCurrentThreadId(), now - lastProcess, (void *)vstEffect, g.soundNumber);
+    }
+    lastProcess = now;
+
     if (midiEvents.numEvents)
         vstEffect->dispatcher(vstEffect, effProcessEvents, 0, 0, (VstEvents *)&midiEvents, 0);
 
@@ -3553,6 +3657,7 @@ static void new_vst_sound(void)
 #define SOUND_MAX 1024
 #define SOUND_NAME 128
 #define INSTRUMENT_MAX 64
+#define AUDIO_MAX 16
 
 typedef struct {
     volatile LONG lock;
@@ -3564,6 +3669,11 @@ typedef struct {
     int last[INSTRUMENT_MAX];
     volatile LONG pid[INSTRUMENT_MAX];
     volatile LONGLONG beat[INSTRUMENT_MAX];
+    volatile LONG audioCount;
+    char audio[AUDIO_MAX][MAX_PATH];
+    volatile LONG audioChannel[AUDIO_MAX];
+    volatile LONG audioPid[AUDIO_MAX];
+    volatile LONGLONG audioBeat[AUDIO_MAX];
 } SoundList;
 
 static HANDLE soundMapping;
@@ -3579,8 +3689,9 @@ static void open_sounds(void)
 }
 
 /* One list for every running instance, so a number names the same sound in each take.
-   Each shuffled drum set is a different sound, so those always get a new number. */
-static int sound_number(const char *name, int unique, int seed)
+   Every drawn sound takes a new number, even a preset already in the list, so a draw
+   never jumps back to an older sound. */
+static int sound_number(const char *name, int seed)
 {
     open_sounds();
     if (!soundList) return 0;
@@ -3588,10 +3699,7 @@ static int sound_number(const char *name, int unique, int seed)
     while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
 
     int count = (int)soundList->count, number = 0;
-    for (int i = 0; !unique && i < count; i++)
-        if (!strcmp(soundList->name[i], name)) { number = i + 1; break; }
-
-    if (!number && count < SOUND_MAX) {
+    if (count < SOUND_MAX) {
         strncpy(soundList->name[count], name, SOUND_NAME - 1);
         soundList->name[count][SOUND_NAME - 1] = 0;
         soundList->seed[count] = seed;
@@ -3662,6 +3770,48 @@ static void withdraw_instrument(void)
     if (slot >= 0) soundList->pid[slot] = 0;
 }
 
+/* A running audio device leaves its driver name, input channel and a heartbeat, so a
+   stems instance mutes only the takes that device input itself recorded and lets the
+   other devices' and inputs' play. */
+static void announce_audio_device(void)
+{
+    open_sounds();
+    if (!soundList || playlistMode || instrumentMode || !g.nIn || !g.driverName[0]) return;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+
+    int channel = g.inCh[0] + 1;
+    int count = (int)soundList->audioCount, slot = -1;
+    for (int i = 0; i < count; i++)
+        if ((int)soundList->audioChannel[i] == channel && !_stricmp(soundList->audio[i], g.driverName)) { slot = i; break; }
+    if (slot < 0 && count < AUDIO_MAX) {
+        strncpy(soundList->audio[count], g.driverName, MAX_PATH - 1);
+        soundList->audio[count][MAX_PATH - 1] = 0;
+        soundList->audioChannel[count] = channel;
+        slot = count;
+        soundList->audioCount = count + 1;
+    }
+    if (slot >= 0) {
+        soundList->audioPid[slot] = GetCurrentProcessId();
+        soundList->audioBeat[slot] = (LONGLONG)GetTickCount64();
+    }
+
+    InterlockedExchange(&soundList->lock, 0);
+}
+
+static void withdraw_audio_device(void)
+{
+    open_sounds();
+    if (!soundList || !g.driverName[0]) return;
+
+    while (InterlockedCompareExchange(&soundList->lock, 1, 0)) Sleep(0);
+    for (int i = 0; i < (int)soundList->audioCount; i++)
+        if ((DWORD)soundList->audioPid[i] == GetCurrentProcessId() &&
+            (int)soundList->audioChannel[i] == g.inCh[0] + 1 && !_stricmp(soundList->audio[i], g.driverName))
+            soundList->audioPid[i] = 0;
+    InterlockedExchange(&soundList->lock, 0);
+}
+
 static int sound_mode(int number)
 {
     open_sounds();
@@ -3675,17 +3825,31 @@ static int sound_mode(int number)
     return MODE_AUDIO;
 }
 
-/* Whether a running instrument instance is playing a sound this stem collides with. */
+/* Whether a running instrument or audio device instance collides with this stem. */
 static int stem_muted(const wchar_t *file)
 {
     open_sounds();
     if (!soundList) return 0;
 
-    wchar_t key[16];
-    stem_key(file, key, 16);
-    int number = _wtoi(key), mode = sound_mode(number);
+    const wchar_t *name;
+    int number = stem_parts(file, &name), mode = kind_mode(name);
 
     ULONGLONG now = GetTickCount64();
+    if (mode == MODE_AUDIO) {
+        wchar_t device[STEM_NAME];
+        stem_device(file, device, STEM_NAME);
+        for (int i = 0; i < (int)soundList->audioCount; i++) {
+            if (!soundList->audioPid[i] || now - (ULONGLONG)soundList->audioBeat[i] > 2000) continue;
+            if ((int)soundList->audioChannel[i] != number) continue;
+
+            wchar_t live[STEM_NAME];
+            MultiByteToWideChar(CP_ACP, 0, soundList->audio[i], -1, live, STEM_NAME);
+            live[STEM_NAME - 1] = 0;
+            if (same_audio_device(device, live)) return 1;
+        }
+        return 0;
+    }
+
     for (int i = 0; i < (int)soundList->instrumentCount; i++) {
         if (!soundList->pid[i] || now - (ULONGLONG)soundList->beat[i] > 2000) continue;
 
@@ -4063,7 +4227,7 @@ static void load_song(void)
         }
     }
     if (adopt)
-        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, 1, seeds[i]);
+        for (int i = 0; i < count; i++) sound_number(names + (size_t)i * SOUND_NAME, seeds[i]);
 
     const char *instruments = json_value(text, "instruments");
     if (instruments && *instruments == '[') load_song_instruments(instruments);
@@ -4455,7 +4619,7 @@ static void print_sound(const char *prefix)
     if (!name[0]) return;
 
     if (!g.soundNumber)
-        g.soundNumber = sound_number(name, g.samplesSound, g.samplesSound ? drumSeed : 0);
+        g.soundNumber = sound_number(name, g.samplesSound ? drumSeed : 0);
     remember_sound(g.soundNumber);
     save_song();
 
@@ -4582,6 +4746,32 @@ static float read_master_volume(void)
     return volume;
 }
 
+/* Auto gain brings a sound's loudest sample of the session to 1.0, so it plays back at
+   that level whether it came in hot or quiet. Each sound keeps its own peak; nothing is
+   written out, so every run starts again from 1.0. */
+static float soundPeaks[SOUND_MAX + 1], inputPeak, synthPeak;
+
+static void auto_gain(float *samples, int channels, int frames, float *peak)
+{
+    float highest = *peak;
+
+    for (int c = 0; c < channels; c++) {
+        const float *channel = samples + (size_t)c * frames;
+        for (int i = 0; i < frames; i++) {
+            float value = fabsf(channel[i]);
+            if (value > highest) highest = value;
+        }
+    }
+    *peak = highest;
+    if (highest <= 0.0f) return;
+
+    float gain = 1.0f / highest;
+    for (int c = 0; c < channels; c++) {
+        float *channel = samples + (size_t)c * frames;
+        for (int i = 0; i < frames; i++) channel[i] *= gain;
+    }
+}
+
 static void process_buffer(int32_t index)
 {
     const int frames = (int)g.bufferSize;
@@ -4602,14 +4792,19 @@ static void process_buffer(int32_t index)
         float held = g.peak[c] * 0.97f;
         g.peak[c] = peak > held ? peak : held;
     }
+    auto_gain(g.inputFloats, g.nIn, frames, &inputPeak);
 
     memset(g.synthFloats, 0, (size_t)frames * sizeof(float));
     if (g.synthEnabled || instrumentMode) drain_midi();
-    if (g.synthEnabled) synth_render(g.synthFloats, frames);
+    if (g.synthEnabled) {
+        synth_render(g.synthFloats, frames);
+        auto_gain(g.synthFloats, 1, frames, &synthPeak);
+    }
 
     if (playlistMode) render_playlist(g.fileFloats, g.nOut, frames);
     else if (instrumentMode) {
         render_instruments(g.fileFloats, g.nOut, frames);
+        auto_gain(g.fileFloats, g.nOut, frames, &soundPeaks[g.soundNumber]);
         taste_tick(frames);
     }
 
@@ -5350,6 +5545,7 @@ static void shutdown_monitor(void)
     recording_stop(0);
     rating_stop();
     withdraw_instrument();
+    withdraw_audio_device();
     clear_loop_cue();
     if (deviceEnumerator) {
         (*(EnumeratorVtbl **)deviceEnumerator)->Release(deviceEnumerator);
@@ -5804,6 +6000,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
             g.volume = read_master_volume();
             if (playlistMode) mute_stems();
             else if (instrumentMode) announce_instrument();
+            else announce_audio_device();
             rating_poll();
             draw_meters();
             lastDraw = now;

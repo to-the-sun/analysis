@@ -119,16 +119,23 @@ def palette_tag(basename):
 def stem_meta(p):
     meta = '%d bars &middot; %.3f s' % (len(p['segments']) * p['bars'],
                                        p['length'] * len(p['segments']))
-    mark = ' '.join(str(v) for v in (p.get('sound'), p.get('mode')) if v is not None)
+    mode = p.get('mode') or ''
+    if mode.lower() not in ('', 'samples', 'synth', 'audio'):
+        return meta + ' &middot; %s input %s' % (mode, p.get('sound'))
+    mark = ' '.join(str(v) for v in (p.get('sound'), mode) if v)
     return meta + (' &middot; sound %s' % mark if p.get('sound') else
                    ' &middot; %s' % mark if mark else '')
 
 
 def sound_class(base, p):
-    if p.get('mode') == 'samples':
+    mode = p.get('mode') or ''
+    kind = mode.lower()
+    if kind == 'samples':
         return ('samples',)
-    if p.get('mode') == 'audio':
+    if kind == 'audio':
         return ('palette', base)
+    if kind and kind != 'synth':
+        return ('device', mode, p.get('sound'))
     return ('sound', p['sound']) if p.get('sound') is not None else None
 
 
