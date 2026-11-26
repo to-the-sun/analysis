@@ -207,7 +207,10 @@ the rating does too. The console's last line shows it and replaces it as it chan
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
-no measurement rather than a drop to zero.
+no measurement rather than a drop to zero. Every instance shows the current bar length of its group before the
+rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
+history, which the analyzer gives as a time in the past and so is shown as its absolute
+value.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
@@ -233,8 +236,8 @@ nothing above the noise floor is not written, and one shorter than the bar its
 instance sees is dropped first.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
-`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position
-in the song over the song's length, in minutes and seconds.
+`[=========---------------] 0:12/0:32 bar 2000 ms  rating 0.000000  score 0.000000`: the
+play position in the song over the song's length, in minutes and seconds.
 
 A WAV dropped into a folder that a stems instance is playing joins the others at the
 next loop point, aligned with them rather than at the top of the song, and the console
