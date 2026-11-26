@@ -2823,7 +2823,6 @@ static void render_drums(float *dst, int outputs, int frames)
 
 static HMODULE vstLibraries[VST_MAX_PLUGINS];
 static char vstNames[VST_MAX_PLUGINS][VST_NAME];
-static char vstEffectNames[VST_MAX_PLUGINS][VST_NAME];
 static int vstLibraryCount, vstActiveLibrary = -1, vstOutputCount, vstProgram, vstPresetCount;
 static AEffect *vstInstances[VST_MAX_PLUGINS];
 static int vstLibraryPresets[VST_MAX_PLUGINS], vstLibraryLow[VST_MAX_PLUGINS], vstLibraryHigh[VST_MAX_PLUGINS];
@@ -3041,13 +3040,6 @@ static void vst_stop(void)
     log_trace("[%9.3f] stopping plugin %p\n", vst_log_time(), (void *)vstEffect);
     vst_call(vstEffect, effMainsChanged, 0, 0, NULL, 0);
     vst_free_buffers();
-}
-
-static void effect_name(AEffect *effect, char *name, size_t size)
-{
-    name[0] = 0;
-    vst_call(effect, effGetEffectName, 0, 0, name, 0);
-    name[size - 1] = 0;
 }
 
 /* Some plugins ignore effSetProgram, so the chosen preset also arrives as raw MIDI:
@@ -3384,10 +3376,7 @@ static void init_vst_taste(int library)
     if (!stats || stats->presets <= 0) {
         AEffect *effect = create_effect(vstLibraries[library]);
         if (effect && effect->dispatcher) {
-            effect_name(effect, vstEffectNames[library], VST_NAME);
-            VstStats *named = find_vst_stats(vstEffectNames[library], vstNames[library]);
-            if (named && named->presets > 0) stats = named;
-            vstLibraryPresets[library] = stats && stats->presets > 0 ? stats->presets : effect->numPrograms;
+            vstLibraryPresets[library] = effect->numPrograms;
             vst_call(effect, effClose, 0, 0, NULL, 0);
         }
     } else vstLibraryPresets[library] = stats->presets;
@@ -4562,13 +4551,18 @@ static void sync_song(void)
     load_song();
 }
 
+/* A sound is named after its plugin's file, not the name the plugin reports for itself:
+   one form everywhere, and nothing has to be asked of the plugin to print a sound. */
 static void sound_name(char *out, size_t size)
 {
     out[0] = 0;
     if (g.samplesSound) snprintf(out, size, "%d drum samples", drumCount);
     else if (vstEffect) {
-        char name[64];
-        effect_name(vstEffect, name, sizeof name);
+        char name[VST_NAME];
+        snprintf(name, sizeof name, "%s", vstActiveLibrary >= 0 ? vstNames[vstActiveLibrary] : "");
+        char *dot = strrchr(name, '.');
+        if (dot) *dot = 0;
+
         char octave[24] = "";
         if (vstOctave) snprintf(octave, sizeof octave, ", octave %+d", vstOctave);
         if (vstPresetCount > 0)
@@ -4579,10 +4573,10 @@ static void sound_name(char *out, size_t size)
     }
 }
 
-/* A sound names its plugin the way the plugin names itself, which usually differs from
-   the file name only by punctuation or a trailing "Plugin": "TAL NoiseMaker Plugin" in
-   TAL-NoiseMaker.dll. Comparing the names settles the library without building an
-   instance of every plugin in the folder to ask it which one it is. */
+/* A sound saved before the file name was used stored the name the plugin reports, which
+   usually differs from the file name only by punctuation or a trailing "Plugin": "TAL
+   NoiseMaker Plugin" in TAL-NoiseMaker.dll. Comparing the names restores such a sound
+   without building an instance of every plugin in the folder to ask which one it is. */
 static int same_plugin(const char *file, const char *name)
 {
     char a[VST_NAME], b[VST_NAME];
@@ -4615,19 +4609,6 @@ static int find_vst_library(const char *name)
         if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
         if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
         if (same_plugin(vstNames[i], name)) return i;
-    }
-
-    /* Only a plugin whose name says nothing about its file name gets this far, and it is
-       asked once. One that is already open is asked, never opened a second time. */
-    for (int i = 0; i < vstLibraryCount; i++) {
-        if (!vstEffectNames[i][0]) {
-            AEffect *open = vstInstances[i];
-            AEffect *effect = open ? open : create_effect(vstLibraries[i]);
-            if (!effect || !effect->dispatcher) continue;
-            effect_name(effect, vstEffectNames[i], VST_NAME);
-            if (!open) vst_call(effect, effClose, 0, 0, NULL, 0);
-        }
-        if (vstEffectNames[i][0] && !_stricmp(vstEffectNames[i], name)) return i;
     }
     return -1;
 }
