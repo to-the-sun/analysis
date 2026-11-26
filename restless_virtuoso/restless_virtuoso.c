@@ -10,7 +10,10 @@
 #include <objbase.h>
 #include <shellapi.h>
 
+#include <ctype.h>
+#include <fcntl.h>
 #include <float.h>
+#include <io.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -42,7 +45,7 @@
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
     char instrument[MAX_PATH], samplesPath[MAX_PATH], vstsPath[MAX_PATH];
-    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale;
+    int rate, buffer, synth, list, inputChannel, samplesRatio, randomScale, archive;
 } Options;
 
 typedef struct {
@@ -178,11 +181,16 @@ static void open_error_log(void)
     }
 }
 
+/* The console keeps its own streams: stdout and stderr are handed to the plugins so that
+   everything they print can be read back into the log. */
+static FILE *consoleOut, *consoleErr;
+static double vst_log_time(void);
+
 static void log_error(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    vfprintf(consoleErr, format, args);
     va_end(args);
 
     if (!errorLog) open_error_log();
@@ -217,6 +225,119 @@ static void append_log_line(const char *text)
     DWORD written;
     WriteFile(file, text, (DWORD)strlen(text), &written, NULL);
     CloseHandle(file);
+}
+
+typedef struct {
+    HANDLE pipe, console;
+    const char *label;
+} Capture;
+
+/* Plugins print through this process's stdout and stderr, which are pipes while the
+   program runs, so their lines reach the log in the same timestamped shape as the host
+   trace lines. Each line is echoed to the console it came from. */
+static DWORD WINAPI capture_console(void *parameter)
+{
+    Capture *capture = parameter;
+    char chunk[512], line[1024];
+    size_t length = 0;
+    DWORD read, written;
+
+    while (ReadFile(capture->pipe, chunk, sizeof chunk, &read, NULL) && read) {
+        if (capture->console) WriteFile(capture->console, chunk, read, &written, NULL);
+        for (DWORD i = 0; i < read; i++) {
+            if (chunk[i] != '\n') {
+                if (length < sizeof line - 1) line[length++] = chunk[i];
+                continue;
+            }
+            if (length && line[length - 1] == '\r') length--;
+            line[length] = 0;
+            log_trace("[%9.3f] %s %s\n", vst_log_time(), capture->label, line);
+            length = 0;
+        }
+    }
+    return 0;
+}
+
+/* OutputDebugString writes to a shared buffer instead of a handle, so that buffer is
+   watched for this process's own messages. A debugger owns it when one is attached. */
+static DWORD WINAPI capture_debug(void *unused)
+{
+    (void)unused;
+    if (IsDebuggerPresent()) return 0;
+
+    HANDLE section = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096,
+                                        "DBWIN_BUFFER");
+    if (!section) return 0;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(section);
+        return 0;
+    }
+
+    void *messages = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 4096);
+    HANDLE ready = CreateEventA(NULL, FALSE, FALSE, "DBWIN_BUFFER_READY");
+    HANDLE arrived = CreateEventA(NULL, FALSE, FALSE, "DBWIN_DATA_READY");
+    if (messages && ready && arrived) {
+        SetEvent(ready);
+        while (WaitForSingleObject(arrived, INFINITE) == WAIT_OBJECT_0) {
+            if (*(DWORD *)messages == GetCurrentProcessId()) {
+                char text[4096];
+                const char *message = (const char *)messages + sizeof(DWORD);
+                size_t length = strnlen(message, sizeof text - 1);
+                memcpy(text, message, length);
+                text[length] = 0;
+                while (length && (text[length - 1] == '\n' || text[length - 1] == '\r'))
+                    text[--length] = 0;
+                log_trace("[%9.3f] plugin debug: %s\n", vst_log_time(), text);
+            }
+            SetEvent(ready);
+        }
+    }
+    if (arrived) CloseHandle(arrived);
+    if (ready) CloseHandle(ready);
+    if (messages) UnmapViewOfFile(messages);
+    CloseHandle(section);
+    return 0;
+}
+
+/* Runs before any plugin is loaded: what a plugin prints is only reachable through the
+   process's console handles or the debug buffer, and both are taken over this early. */
+static void capture_plugins(void)
+{
+    static Capture captures[2];
+    static const char *labels[] = {"plugin out:", "plugin err:"};
+    static const DWORD streams[] = {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    static const int fds[] = {1, 2};
+    HANDLE consoles[] = {GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE)};
+
+    int out = _dup(1), err = _dup(2);
+    if (out >= 0) consoleOut = _fdopen(out, "w");
+    if (err >= 0) consoleErr = _fdopen(err, "w");
+    if (consoleOut) setvbuf(consoleOut, NULL, _IONBF, 0);
+    if (consoleErr) setvbuf(consoleErr, NULL, _IONBF, 0);
+
+    for (int i = 0; i < 2; i++) {
+        HANDLE read, write;
+        if (!CreatePipe(&read, &write, NULL, 4096)) continue;
+        SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+        int fd = _open_osfhandle((intptr_t)write, _O_WRONLY);
+        if (fd < 0) {
+            CloseHandle(read);
+            continue;
+        }
+        _dup2(fd, fds[i]);
+        SetStdHandle(streams[i], write);
+        setvbuf(i ? stderr : stdout, NULL, _IOLBF, 0);
+
+        captures[i].pipe = read;
+        captures[i].console = consoles[i];
+        captures[i].label = labels[i];
+        CloseHandle(CreateThread(NULL, 0, capture_console, &captures[i], 0, NULL));
+    }
+
+    CloseHandle(CreateThread(NULL, 0, capture_debug, NULL, 0, NULL));
+
+    if (!consoleOut) consoleOut = stdout;
+    if (!consoleErr) consoleErr = stderr;
 }
 
 static volatile LONG initReturned;
@@ -426,11 +547,11 @@ static const char *asio_error_text(ASIOError error)
 static void log_line(const char *format, ...)
 {
     va_list args;
-    putchar('\n');
+    fputc('\n', consoleOut);
     va_start(args, format);
-    vprintf(format, args);
+    vfprintf(consoleOut, format, args);
     va_end(args);
-    putchar('\n');
+    fputc('\n', consoleOut);
     g.lineWidth = 0;
 }
 
@@ -533,8 +654,8 @@ static int is_folder_w(const wchar_t *path)
 
 static void print_wide_path(const wchar_t *path)
 {
-    if (!wcsncmp(path, L"\\\\?\\UNC\\", 8)) printf("\\\\%ls", path + 8);
-    else printf("%ls", path + (wcsncmp(path, L"\\\\?\\", 4) ? 0 : 4));
+    if (!wcsncmp(path, L"\\\\?\\UNC\\", 8)) fprintf(consoleOut, "\\\\%ls", path + 8);
+    else fprintf(consoleOut, "%ls", path + (wcsncmp(path, L"\\\\?\\", 4) ? 0 : 4));
 }
 
 static int playlistMode, instrumentMode;
@@ -869,13 +990,16 @@ static void log_playlist(const char *event, double position)
     }
 }
 
-static int start_playlist_w(const wchar_t *folder)
+static void archive_stems(const wchar_t *folder);
+
+static int start_playlist_w(const wchar_t *folder, int archive)
 {
     wchar_t *path = long_path(folder);
     if (!path) {
         log_error("Could not resolve the folder path.\n");
         return -1;
     }
+    if (archive) archive_stems(path);
     if (scan_audio_files(path) <= 0) {
         log_error("Could not find any audio files in '%ls'.\n", path);
         free(path);
@@ -905,14 +1029,14 @@ static int start_playlist_w(const wchar_t *folder)
     return 0;
 }
 
-static int start_playlist(const char *folder)
+static int start_playlist(const char *folder, int archive)
 {
     wchar_t *path = widen(folder);
     if (!path) {
         log_error("Could not convert the folder path.\n");
         return -1;
     }
-    int result = start_playlist_w(path);
+    int result = start_playlist_w(path, archive);
     free(path);
     return result;
 }
@@ -1789,11 +1913,12 @@ static void make_folders(const wchar_t *path)
     CreateDirectoryW(buffer, NULL);
 }
 
-static void spawn_stems(const wchar_t *folder)
+static int spawn_stems(const wchar_t *folder, int archive)
 {
     wchar_t exe[MAX_PATH], command[2048 + MAX_PATH];
-    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return;
-    swprintf(command, sizeof command / sizeof *command, L"\"%ls\" \"%ls\"", exe, folder);
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return 0;
+    swprintf(command, sizeof command / sizeof *command, archive ? L"\"%ls\" \"%ls\"" : L"\"%ls\" \"%ls\" --no-archive",
+             exe, folder);
 
     STARTUPINFOW info;
     PROCESS_INFORMATION process;
@@ -1801,13 +1926,36 @@ static void spawn_stems(const wchar_t *folder)
     info.cb = sizeof info;
     if (!CreateProcessW(exe, command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &info, &process)) {
         log_error("Could not start a stems instance for '%ls' (error %lu).\n", folder, GetLastError());
-        return;
+        return 0;
     }
 
     if (spawnedStems) CloseHandle(spawnedStems);
     spawnedStems = process.hProcess;
     CloseHandle(process.hThread);
     log_trace("started stems instance %lu on '%ls'\n", (unsigned long)process.dwProcessId, folder);
+    return 1;
+}
+
+/* A bare double-click opens the stems of one of the projects at random. The projects
+   are drawn as the scan goes, so no list is kept. */
+static int spawn_random_stems(void)
+{
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(RATING_PROJECTS L"\\*", &entry);
+    if (find == INVALID_HANDLE_VALUE) return 0;
+
+    wchar_t stems[1200], pick[1200];
+    int count = 0;
+    do {
+        if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L"..")) continue;
+        swprintf(stems, 1200, L"%ls\\%ls\\[stems]", RATING_PROJECTS, entry.cFileName);
+        if (!is_folder_w(stems)) continue;
+        if (rand() % ++count == 0) wcscpy(pick, stems);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+
+    return count && spawn_stems(pick, 1);
 }
 
 static int spawned_stems_alive(void)
@@ -2159,7 +2307,7 @@ static void save_recording(TakeChunk *first, drwav_uint64 frames, unsigned rate,
 
     log_trace("recorded %ls\n", path);
     if (!shared) {
-        spawn_stems(folder);
+        spawn_stems(folder, 0);
         return;
     }
 
@@ -2702,7 +2850,6 @@ static void render_drums(float *dst, int outputs, int frames)
 
 static HMODULE vstLibraries[VST_MAX_PLUGINS];
 static char vstNames[VST_MAX_PLUGINS][VST_NAME];
-static char vstEffectNames[VST_MAX_PLUGINS][VST_NAME];
 static int vstLibraryCount, vstActiveLibrary = -1, vstOutputCount, vstProgram, vstPresetCount;
 static AEffect *vstInstances[VST_MAX_PLUGINS];
 static int vstLibraryPresets[VST_MAX_PLUGINS], vstLibraryLow[VST_MAX_PLUGINS], vstLibraryHigh[VST_MAX_PLUGINS];
@@ -2920,13 +3067,6 @@ static void vst_stop(void)
     log_trace("[%9.3f] stopping plugin %p\n", vst_log_time(), (void *)vstEffect);
     vst_call(vstEffect, effMainsChanged, 0, 0, NULL, 0);
     vst_free_buffers();
-}
-
-static void effect_name(AEffect *effect, char *name, size_t size)
-{
-    name[0] = 0;
-    vst_call(effect, effGetEffectName, 0, 0, name, 0);
-    name[size - 1] = 0;
 }
 
 /* Some plugins ignore effSetProgram, so the chosen preset also arrives as raw MIDI:
@@ -3263,10 +3403,7 @@ static void init_vst_taste(int library)
     if (!stats || stats->presets <= 0) {
         AEffect *effect = create_effect(vstLibraries[library]);
         if (effect && effect->dispatcher) {
-            effect_name(effect, vstEffectNames[library], VST_NAME);
-            VstStats *named = find_vst_stats(vstEffectNames[library], vstNames[library]);
-            if (named && named->presets > 0) stats = named;
-            vstLibraryPresets[library] = stats && stats->presets > 0 ? stats->presets : effect->numPrograms;
+            vstLibraryPresets[library] = effect->numPrograms;
             vst_call(effect, effClose, 0, 0, NULL, 0);
         }
     } else vstLibraryPresets[library] = stats->presets;
@@ -3903,6 +4040,239 @@ static int mix_path(wchar_t *out, size_t size)
     return 0;
 }
 
+/* A stems instance archives its project into [versions] as it starts, before it can
+   change anything: the folder it plays, the sibling song.json and the master mix,
+   which is the one in the project folder or its copy in [Works]. The archive is
+   named after the master, and audio is already compressed, so entries are stored. */
+
+typedef struct {
+    char name[512];
+    uint32_t crc, size, offset;
+} ZipEntry;
+
+typedef struct {
+    FILE *file;
+    ZipEntry *entries;
+    int count, alloc;
+    uint32_t offset;
+} ZipWriter;
+
+static void zip_put16(FILE *file, unsigned value)
+{
+    fputc((int)(value & 0xff), file);
+    fputc((int)((value >> 8) & 0xff), file);
+}
+
+static void zip_put32(FILE *file, uint32_t value)
+{
+    zip_put16(file, value & 0xffffu);
+    zip_put16(file, value >> 16);
+}
+
+static uint32_t zip_crc(uint32_t crc, const unsigned char *bytes, size_t count)
+{
+    static uint32_t table[256];
+    if (!table[1]) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t value = i;
+            for (int bit = 0; bit < 8; bit++)
+                value = value & 1 ? 0xedb88320u ^ (value >> 1) : value >> 1;
+            table[i] = value;
+        }
+    }
+
+    crc = ~crc;
+    while (count--) crc = table[(crc ^ *bytes++) & 0xff] ^ (crc >> 8);
+    return ~crc;
+}
+
+static void zip_add(ZipWriter *zip, const wchar_t *path, const char *name)
+{
+    if (zip->count == zip->alloc) {
+        int alloc = zip->alloc ? zip->alloc * 2 : 16;
+        ZipEntry *entries = realloc(zip->entries, (size_t)alloc * sizeof *entries);
+        if (!entries) return;
+        zip->entries = entries;
+        zip->alloc = alloc;
+    }
+
+    FILE *in = _wfopen(path, L"rb");
+    if (!in) {
+        log_error("Could not archive '%ls'.\n", path);
+        return;
+    }
+
+    ZipEntry *entry = &zip->entries[zip->count];
+    snprintf(entry->name, sizeof entry->name, "%s", name);
+    size_t nameLength = strlen(entry->name);
+    entry->offset = zip->offset;
+
+    zip_put32(zip->file, 0x04034b50);
+    zip_put16(zip->file, 20);
+    zip_put16(zip->file, 0x0800); /* UTF-8 names */
+    zip_put16(zip->file, 0);      /* stored */
+    zip_put16(zip->file, 0);      /* time */
+    zip_put16(zip->file, 0);      /* date */
+    long crcAt = ftell(zip->file);
+    zip_put32(zip->file, 0);
+    zip_put32(zip->file, 0);
+    zip_put32(zip->file, 0);
+    zip_put16(zip->file, (unsigned)nameLength);
+    zip_put16(zip->file, 0); /* extra length */
+    fwrite(entry->name, 1, nameLength, zip->file);
+
+    unsigned char buffer[65536];
+    uint32_t crc = 0, size = 0;
+    size_t read;
+    while ((read = fread(buffer, 1, sizeof buffer, in)) > 0) {
+        crc = zip_crc(crc, buffer, read);
+        fwrite(buffer, 1, read, zip->file);
+        size += (uint32_t)read;
+    }
+    fclose(in);
+
+    long end = ftell(zip->file);
+    fseek(zip->file, crcAt, SEEK_SET);
+    zip_put32(zip->file, crc);
+    zip_put32(zip->file, size);
+    zip_put32(zip->file, size);
+    fseek(zip->file, end, SEEK_SET);
+
+    entry->crc = crc;
+    entry->size = size;
+    zip->offset = (uint32_t)end;
+    zip->count++;
+}
+
+static void zip_add_folder(ZipWriter *zip, const wchar_t *folder, const char *prefix)
+{
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L"..")) continue;
+
+        size_t nameLength = wcslen(entry.cFileName);
+        wchar_t *path = malloc((length + nameLength + 2) * sizeof *path);
+        if (!path) continue;
+        swprintf(path, length + nameLength + 2, L"%ls\\%ls", folder, entry.cFileName);
+
+        char narrow[STEM_NAME + 1], name[512];
+        WideCharToMultiByte(CP_UTF8, 0, entry.cFileName, -1, narrow, sizeof narrow, NULL, NULL);
+        int written = snprintf(name, sizeof name, "%s/%s", prefix, narrow);
+        if (written > 0 && written < (int)sizeof name) {
+            if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) zip_add_folder(zip, path, name);
+            else zip_add(zip, path, name);
+        }
+        free(path);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+}
+
+static void zip_finish(ZipWriter *zip)
+{
+    uint32_t start = zip->offset;
+    for (int i = 0; i < zip->count; i++) {
+        ZipEntry *entry = &zip->entries[i];
+        size_t nameLength = strlen(entry->name);
+
+        zip_put32(zip->file, 0x02014b50);
+        zip_put16(zip->file, 20);
+        zip_put16(zip->file, 20);
+        zip_put16(zip->file, 0x0800);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put32(zip->file, entry->crc);
+        zip_put32(zip->file, entry->size);
+        zip_put32(zip->file, entry->size);
+        zip_put16(zip->file, (unsigned)nameLength);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put32(zip->file, 0);
+        zip_put32(zip->file, entry->offset);
+        fwrite(entry->name, 1, nameLength, zip->file);
+    }
+
+    long end = ftell(zip->file);
+    zip_put32(zip->file, 0x06054b50);
+    zip_put16(zip->file, 0);
+    zip_put16(zip->file, 0);
+    zip_put16(zip->file, (unsigned)zip->count);
+    zip_put16(zip->file, (unsigned)zip->count);
+    zip_put32(zip->file, (uint32_t)end - start);
+    zip_put32(zip->file, start);
+    zip_put16(zip->file, 0);
+
+    fclose(zip->file);
+    free(zip->entries);
+}
+
+static void archive_stems(const wchar_t *folder)
+{
+    static const wchar_t works[] = L"D:\\[Library]\\[Audio]\\[Works]";
+    wchar_t project[STEM_NAME + 1], stems[STEM_NAME + 1], song[1400], master[1400], copy[1400];
+    wchar_t versions[1400], archive[1400];
+    size_t root = project_root(folder), end = wcslen(folder);
+    while (end > 3 && (folder[end - 1] == L'\\' || folder[end - 1] == L'/')) end--;
+
+    size_t stemsStart = end;
+    while (stemsStart > 3 && folder[stemsStart - 1] != L'\\' && folder[stemsStart - 1] != L'/') stemsStart--;
+    size_t projectEnd = root ? root - 1 : 0, projectStart = projectEnd;
+    while (projectStart > 3 && folder[projectStart - 1] != L'\\' && folder[projectStart - 1] != L'/') projectStart--;
+
+    size_t projectLength = projectEnd - projectStart, stemsLength = end - stemsStart;
+    if (root <= 4 || projectEnd <= projectStart || !stemsLength) return;
+    if (projectLength > STEM_NAME || stemsLength > STEM_NAME || root + projectLength + 20 > 1400) return;
+
+    wmemcpy(project, folder + projectStart, projectLength);
+    project[projectLength] = 0;
+    wmemcpy(stems, folder + stemsStart, stemsLength);
+    stems[stemsLength] = 0;
+    wmemcpy(song, folder, root);
+    wcscpy(song + root, L"song.json");
+    wmemcpy(versions, folder, root);
+    wcscpy(versions + root, L"[versions]");
+    swprintf(archive, 1400, L"%ls\\%ls.zip", versions, project);
+    swprintf(master, 1400, L"%.*ls%ls.wav", (int)root, folder, project);
+    swprintf(copy, 1400, L"%ls\\%ls.wav", works, project);
+
+    make_folders(versions);
+    FILE *file = _wfopen(archive, L"wb");
+    if (!file) {
+        log_error("Could not write '%ls'.\n", archive);
+        return;
+    }
+
+    ZipWriter zip;
+    memset(&zip, 0, sizeof zip);
+    zip.file = file;
+
+    char folderName[STEM_NAME + 1], projectName[STEM_NAME + 1], entry[STEM_NAME + 16];
+    WideCharToMultiByte(CP_UTF8, 0, stems, -1, folderName, sizeof folderName, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, project, -1, projectName, sizeof projectName, NULL, NULL);
+    zip_add_folder(&zip, folder, folderName);
+
+    if (GetFileAttributesW(song) != INVALID_FILE_ATTRIBUTES) zip_add(&zip, song, "song.json");
+    snprintf(entry, sizeof entry, "%s.wav", projectName);
+    if (GetFileAttributesW(master) != INVALID_FILE_ATTRIBUTES) zip_add(&zip, master, entry);
+    if (GetFileAttributesW(copy) != INVALID_FILE_ATTRIBUTES) {
+        snprintf(entry, sizeof entry, "[Works]/%s.wav", projectName);
+        zip_add(&zip, copy, entry);
+    }
+    zip_finish(&zip);
+    log_trace("archived the project into '%ls'\n", archive);
+}
+
 static const char *song_field(const char *at, char *key, size_t size)
 {
     at = json_text(skip_space(at), key, size);
@@ -4441,13 +4811,18 @@ static void sync_song(void)
     load_song();
 }
 
+/* A sound is named after its plugin's file, not the name the plugin reports for itself:
+   one form everywhere, and nothing has to be asked of the plugin to print a sound. */
 static void sound_name(char *out, size_t size)
 {
     out[0] = 0;
     if (g.samplesSound) snprintf(out, size, "%d drum samples", drumCount);
     else if (vstEffect) {
-        char name[64];
-        effect_name(vstEffect, name, sizeof name);
+        char name[VST_NAME];
+        snprintf(name, sizeof name, "%s", vstActiveLibrary >= 0 ? vstNames[vstActiveLibrary] : "");
+        char *dot = strrchr(name, '.');
+        if (dot) *dot = 0;
+
         char octave[24] = "";
         if (vstOctave) snprintf(octave, sizeof octave, ", octave %+d", vstOctave);
         if (vstPresetCount > 0)
@@ -4458,24 +4833,42 @@ static void sound_name(char *out, size_t size)
     }
 }
 
+/* A sound saved before the file name was used stored the name the plugin reports, which
+   usually differs from the file name only by punctuation or a trailing "Plugin": "TAL
+   NoiseMaker Plugin" in TAL-NoiseMaker.dll. Comparing the names restores such a sound
+   without building an instance of every plugin in the folder to ask which one it is. */
+static int same_plugin(const char *file, const char *name)
+{
+    char a[VST_NAME], b[VST_NAME];
+    size_t length = 0;
+
+    for (const char *at = file; *at && *at != '.'; at++)
+        if (isalnum((unsigned char)*at) && length < sizeof a - 1) a[length++] = (char)tolower(*at);
+    a[length] = 0;
+
+    for (length = 0; *name && length < sizeof b - 1; name++)
+        if (isalnum((unsigned char)*name)) b[length++] = (char)tolower(*name);
+    b[length] = 0;
+
+    const char *shortName = strlen(a) <= strlen(b) ? a : b;
+    const char *longName = strlen(a) <= strlen(b) ? b : a;
+    size_t common = strlen(shortName);
+    if (!common || strncmp(longName, shortName, common)) return 0;
+    if (!longName[common]) return 1;
+
+    static const char *noise[] = {"plugin", "vst", "vsti", "x64", "dll"};
+    for (int i = 0; i < 5; i++)
+        if (!strcmp(longName + common, noise[i])) return 1;
+    return 0;
+}
+
 static int find_vst_library(const char *name)
 {
     for (int i = 0; i < vstLibraryCount; i++) {
         size_t length = strlen(vstNames[i]);
         if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
         if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
-    }
-
-    /* A library is asked its effect name once: building an instance to ask again makes
-       the plugin construct and destroy its whole state on every sound it restores. */
-    for (int i = 0; i < vstLibraryCount; i++) {
-        if (!vstEffectNames[i][0]) {
-            AEffect *effect = create_effect(vstLibraries[i]);
-            if (!effect || !effect->dispatcher) continue;
-            effect_name(effect, vstEffectNames[i], VST_NAME);
-            vst_call(effect, effClose, 0, 0, NULL, 0);
-        }
-        if (vstEffectNames[i][0] && !_stricmp(vstEffectNames[i], name)) return i;
+        if (same_plugin(vstNames[i], name)) return i;
     }
     return -1;
 }
@@ -4575,8 +4968,8 @@ static int restore_sound(int number)
 /* Overwrites the meters line in place, so a message leaves no blank line behind it. */
 static void console_line(const char *text)
 {
-    printf("\r%-*s\n", g.lineWidth, text);
-    fflush(stdout);
+    fprintf(consoleOut, "\r%-*s\n", g.lineWidth, text);
+    fflush(consoleOut);
     g.lineWidth = 0;
 }
 
@@ -5388,19 +5781,19 @@ static void list_devices(void)
     char names[64][128];
     int drivers = list_drivers(names, 64);
 
-    printf("ASIO drivers:\n");
-    for (int i = 0; i < drivers; i++) printf("  %d  %s\n", i, names[i]);
-    if (!drivers) printf("  (none)\n");
+    fprintf(consoleOut, "ASIO drivers:\n");
+    for (int i = 0; i < drivers; i++) fprintf(consoleOut, "  %d  %s\n", i, names[i]);
+    if (!drivers) fprintf(consoleOut, "  (none)\n");
 
-    printf("MIDI inputs:\n");
+    fprintf(consoleOut, "MIDI inputs:\n");
     UINT inputs = midiInGetNumDevs();
     for (UINT i = 0; i < inputs; i++) {
         MIDIINCAPS caps;
         MMRESULT result = midiInGetDevCaps(i, &caps, sizeof caps);
-        if (result == MMSYSERR_NOERROR) printf("  %u  %s\n", i, caps.szPname);
-        else printf("  %u  (no details: %s)\n", i, midi_error_text(result));
+        if (result == MMSYSERR_NOERROR) fprintf(consoleOut, "  %u  %s\n", i, caps.szPname);
+        else fprintf(consoleOut, "  %u  (no details: %s)\n", i, midi_error_text(result));
     }
-    if (!inputs) printf("  (none)\n");
+    if (!inputs) fprintf(consoleOut, "  (none)\n");
 }
 
 static HANDLE consoleInput;
@@ -5489,8 +5882,8 @@ static void draw_meters(void)
         if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     }
 
-    length += snprintf(line + length, sizeof line - (size_t)length, "%srating %.6f  score %.6f",
-                       length ? "  " : "", rating_current(), ratingBurst);
+    length += snprintf(line + length, sizeof line - (size_t)length, "%sbar %.0f ms  rating %.6f  score %.6f",
+                       length ? "  " : "", ratingBar, rating_current(), ratingBurst);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));
@@ -5499,8 +5892,8 @@ static void draw_meters(void)
     }
     g.lineWidth = length;
 
-    printf("\r%s", line);
-    fflush(stdout);
+    fprintf(consoleOut, "\r%s", line);
+    fflush(consoleOut);
 }
 
 /* An instrument jamming into this group is asked to stop and write its take while
@@ -5586,8 +5979,8 @@ static int stream_midi(const char *device, int channel)
     g.midiStream = 1;
     if (open_midi_input(device) != 0) return 1;
 
-    if (channel) printf("streaming MIDI input '%s', channel %d\n", device, channel);
-    else printf("streaming MIDI input '%s', all channels\n", device);
+    if (channel) fprintf(consoleOut, "streaming MIDI input '%s', channel %d\n", device, channel);
+    else fprintf(consoleOut, "streaming MIDI input '%s', all channels\n", device);
 
     while (!g.quit) Sleep(5);
 
@@ -5597,7 +5990,7 @@ static int stream_midi(const char *device, int channel)
 
 static void usage(void)
 {
-    printf(
+    fprintf(consoleOut,
         "restless_virtuoso - play ASIO inputs on ASIO outputs\n"
         "\n"
         "Usage:\n"
@@ -5700,6 +6093,7 @@ static int parse_args(int argc, char **argv, Options *options)
         if (!strcmp(argument, "--list") || !strcmp(argument, "-l")) options->list = 1;
         else if (!strcmp(argument, "--help") || !strcmp(argument, "-h")) { usage(); return 2; }
         else if (!strcmp(argument, "--no-synth")) options->synth = 0;
+        else if (!strcmp(argument, "--no-archive")) options->archive = 0;
         else if (!strcmp(argument, "--driver") || !strcmp(argument, "-d")) {
             if (!hasValue) return 1;
             options->driver = argv[++i];
@@ -5738,8 +6132,8 @@ static int parse_args(int argc, char **argv, Options *options)
 static void pause_on_error(int exitCode)
 {
     if (!exitCode) return;
-    printf("\nPress Enter to close...");
-    fflush(stdout);
+    fprintf(consoleOut, "\nPress Enter to close...");
+    fflush(consoleOut);
     getchar();
 }
 
@@ -5749,6 +6143,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
     Options options;
     memset(&options, 0, sizeof options);
     options.synth = 1;
+    options.archive = 1;
 
     const char *settings = !folder && argc > 1 && is_json_path(argv[1]) ? argv[1] : NULL;
     if (settings && load_settings(settings, &options) != 0) return 1;
@@ -5785,17 +6180,17 @@ static int run(int argc, char **argv, const wchar_t *folder)
 
     if (folder) {
         playlistMode = 1;
-        if (start_playlist_w(folder) != 0) return 1;
+        if (start_playlist_w(folder, options.archive) != 0) return 1;
     } else if (options.instrument[0]) {
         if (is_folder(options.instrument)) {
             playlistMode = 1;
-            if (start_playlist(options.instrument) != 0) return 1;
+            if (start_playlist(options.instrument, options.archive) != 0) return 1;
         } else if (resolve_driver(options.instrument, names, driverCount)) {
             if (!options.driver) options.driver = options.instrument;
         } else if (resolve_midi_in(options.instrument) >= 0) {
             if (!options.samplesPath[0] && !options.vstsPath[0]) {
                 int result = stream_midi(options.instrument, options.inputChannel);
-                printf("\n");
+                fprintf(consoleOut, "\n");
                 return result;
             }
             if (options.inputChannel > 16) {
@@ -5903,21 +6298,21 @@ static int run(int argc, char **argv, const wchar_t *folder)
     rating_start();
 
     if (playlistMode) {
-        printf("  %d audio files mixed from ", stemCount);
+        fprintf(consoleOut, "  %d audio files mixed from ", stemCount);
         print_wide_path(playlistFolder);
-        printf("\n");
+        fprintf(consoleOut, "\n");
     }
     print_sound("sound ");
 
     if (g.midiInIndex >= 0) {
         MIDIINCAPS caps;
         if (midiInGetDevCaps((UINT)g.midiInIndex, &caps, sizeof caps) == MMSYSERR_NOERROR)
-            printf("  MIDI in %d (%s)%s\n", g.midiInIndex, caps.szPname, g.synthEnabled ? ", sine synth on" : "");
+            fprintf(consoleOut, "  MIDI in %d (%s)%s\n", g.midiInIndex, caps.szPname, g.synthEnabled ? ", sine synth on" : "");
     }
     if (g.midiOutIndex >= 0) {
         MIDIOUTCAPS caps;
         if (midiOutGetDevCaps((UINT)g.midiOutIndex, &caps, sizeof caps) == MMSYSERR_NOERROR)
-            printf("  MIDI thru -> %d (%s)\n", g.midiOutIndex, caps.szPname);
+            fprintf(consoleOut, "  MIDI thru -> %d (%s)\n", g.midiOutIndex, caps.szPname);
     }
 
     if (playlistMode) publish_palette(playlistFolder);
@@ -6014,7 +6409,7 @@ done:
     shutdown_monitor();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
-    printf("\n");
+    fprintf(consoleOut, "\n");
     return exitCode;
 }
 
@@ -6038,7 +6433,13 @@ int main(int argc, char **argv)
 {
     SetUnhandledExceptionFilter(crash_handler);
     open_error_log();
+    capture_plugins();
     srand((unsigned)GetTickCount64());
+    if (argc == 1 && spawn_random_stems()) {
+        if (errorLog) fclose(errorLog);
+        return 0;
+    }
+
     wchar_t *folder = dropped_folder();
     int exitCode = run(argc - (folder ? 1 : 0), argv + (folder ? 1 : 0), folder);
     if (quitEvent) SetEvent(quitEvent);

@@ -51,6 +51,11 @@ A folder dropped onto `restless_virtuoso.exe` (or passed as the first argument) 
 played directly, as if it were the `instrument` key, and may be longer than
 `MAX_PATH`.
 
+A plain double-click, with nothing passed to it, starts a stems instance on a random
+project: every folder in `D:\[Library]\[Audio]\[Works]\[Projects]` that holds a
+`[stems]` folder is a candidate, and one is drawn. The clicked instance exits as soon
+as it has started that one. With nothing to draw from it monitors as usual.
+
 `instrument` is an ASIO driver or MIDI input name from `--list`, or the absolute path
 of a folder. A folder's audio files play together as stems and loop when the longest
 one ends. `input-channel` is the 1-based ASIO input, or the MIDI channel for a MIDI
@@ -126,6 +131,16 @@ driver's rate. `.wav`, `.wave`, `.aif`, `.aiff`, `.flac`, `.mp3`, `.ogg` and `.o
 picked up, and each one is decoded as WAV, AIFF, FLAC, MP3 or Ogg Vorbis by its content
 rather than its extension.
 
+Before a stems instance plays anything it archives the project into a `[versions]`
+folder beside the stems folder, named after the master mix, e.g.
+`[versions]\2026-11-20-00-41-59.zip`. The archive holds the stems folder, the sibling
+`song.json` and the master mix from the project folder, plus the copy of it in
+`D:\[Library]\[Audio]\[Works]` under `[Works]` when that exists. An archive already
+there under that name is replaced, so it always holds the state the instance started
+from. Only a stems instance started from the exe itself, by a double-click or a stems
+folder dropped onto it, archives; the one an instrument instance starts for a new
+project's first take does not.
+
 ## Loop recordings
 
 The instance playing a folder sends a loop start cue to every other running instance
@@ -194,7 +209,10 @@ the rating does too. The console's last line shows it and replaces it as it chan
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
-no measurement rather than a drop to zero.
+no measurement rather than a drop to zero. Every instance shows the current bar length of its group before the
+rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
+history, which the analyzer gives as a time in the past and so is shown as its absolute
+value.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,
@@ -220,8 +238,8 @@ nothing above the noise floor is not written, and one shorter than the bar its
 instance sees is dropped first.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
-`[=========---------------] 0:12/0:32 rating 0.000000  score 0.000000`: the play position
-in the song over the song's length, in minutes and seconds.
+`[=========---------------] 0:12/0:32 bar 2000 ms  rating 0.000000  score 0.000000`: the
+play position in the song over the song's length, in minutes and seconds.
 
 A WAV dropped into a folder that a stems instance is playing joins the others at the
 next loop point, aligned with them rather than at the top of the song, and the console
@@ -251,5 +269,5 @@ recorded from its own input, and leaves the other devices' and inputs' stems pla
 - Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
-- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors.
+- Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors. Whatever the plugins print goes into the same log, timestamped beside the host's lines: stdout as `plugin out:`, stderr as `plugin err:` and `OutputDebugString` as `plugin debug:`.
 - At startup, the program's logs older than 7 days are moved to the Recycle Bin.
