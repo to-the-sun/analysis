@@ -10,7 +10,10 @@
 #include <objbase.h>
 #include <shellapi.h>
 
+#include <ctype.h>
+#include <fcntl.h>
 #include <float.h>
+#include <io.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -178,11 +181,16 @@ static void open_error_log(void)
     }
 }
 
+/* The console keeps its own streams: stdout and stderr are handed to the plugins so that
+   everything they print can be read back into the log. */
+static FILE *consoleOut, *consoleErr;
+static double vst_log_time(void);
+
 static void log_error(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    vfprintf(consoleErr, format, args);
     va_end(args);
 
     if (!errorLog) open_error_log();
@@ -217,6 +225,119 @@ static void append_log_line(const char *text)
     DWORD written;
     WriteFile(file, text, (DWORD)strlen(text), &written, NULL);
     CloseHandle(file);
+}
+
+typedef struct {
+    HANDLE pipe, console;
+    const char *label;
+} Capture;
+
+/* Plugins print through this process's stdout and stderr, which are pipes while the
+   program runs, so their lines reach the log in the same timestamped shape as the host
+   trace lines. Each line is echoed to the console it came from. */
+static DWORD WINAPI capture_console(void *parameter)
+{
+    Capture *capture = parameter;
+    char chunk[512], line[1024];
+    size_t length = 0;
+    DWORD read, written;
+
+    while (ReadFile(capture->pipe, chunk, sizeof chunk, &read, NULL) && read) {
+        if (capture->console) WriteFile(capture->console, chunk, read, &written, NULL);
+        for (DWORD i = 0; i < read; i++) {
+            if (chunk[i] != '\n') {
+                if (length < sizeof line - 1) line[length++] = chunk[i];
+                continue;
+            }
+            if (length && line[length - 1] == '\r') length--;
+            line[length] = 0;
+            log_trace("[%9.3f] %s %s\n", vst_log_time(), capture->label, line);
+            length = 0;
+        }
+    }
+    return 0;
+}
+
+/* OutputDebugString writes to a shared buffer instead of a handle, so that buffer is
+   watched for this process's own messages. A debugger owns it when one is attached. */
+static DWORD WINAPI capture_debug(void *unused)
+{
+    (void)unused;
+    if (IsDebuggerPresent()) return 0;
+
+    HANDLE section = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096,
+                                        "DBWIN_BUFFER");
+    if (!section) return 0;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(section);
+        return 0;
+    }
+
+    void *messages = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 4096);
+    HANDLE ready = CreateEventA(NULL, FALSE, FALSE, "DBWIN_BUFFER_READY");
+    HANDLE arrived = CreateEventA(NULL, FALSE, FALSE, "DBWIN_DATA_READY");
+    if (messages && ready && arrived) {
+        SetEvent(ready);
+        while (WaitForSingleObject(arrived, INFINITE) == WAIT_OBJECT_0) {
+            if (*(DWORD *)messages == GetCurrentProcessId()) {
+                char text[4096];
+                const char *message = (const char *)messages + sizeof(DWORD);
+                size_t length = strnlen(message, sizeof text - 1);
+                memcpy(text, message, length);
+                text[length] = 0;
+                while (length && (text[length - 1] == '\n' || text[length - 1] == '\r'))
+                    text[--length] = 0;
+                log_trace("[%9.3f] plugin debug: %s\n", vst_log_time(), text);
+            }
+            SetEvent(ready);
+        }
+    }
+    if (arrived) CloseHandle(arrived);
+    if (ready) CloseHandle(ready);
+    if (messages) UnmapViewOfFile(messages);
+    CloseHandle(section);
+    return 0;
+}
+
+/* Runs before any plugin is loaded: what a plugin prints is only reachable through the
+   process's console handles or the debug buffer, and both are taken over this early. */
+static void capture_plugins(void)
+{
+    static Capture captures[2];
+    static const char *labels[] = {"plugin out:", "plugin err:"};
+    static const DWORD streams[] = {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    static const int fds[] = {1, 2};
+    HANDLE consoles[] = {GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE)};
+
+    int out = _dup(1), err = _dup(2);
+    if (out >= 0) consoleOut = _fdopen(out, "w");
+    if (err >= 0) consoleErr = _fdopen(err, "w");
+    if (consoleOut) setvbuf(consoleOut, NULL, _IONBF, 0);
+    if (consoleErr) setvbuf(consoleErr, NULL, _IONBF, 0);
+
+    for (int i = 0; i < 2; i++) {
+        HANDLE read, write;
+        if (!CreatePipe(&read, &write, NULL, 4096)) continue;
+        SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+        int fd = _open_osfhandle((intptr_t)write, _O_WRONLY);
+        if (fd < 0) {
+            CloseHandle(read);
+            continue;
+        }
+        _dup2(fd, fds[i]);
+        SetStdHandle(streams[i], write);
+        setvbuf(i ? stderr : stdout, NULL, _IOLBF, 0);
+
+        captures[i].pipe = read;
+        captures[i].console = consoles[i];
+        captures[i].label = labels[i];
+        CloseHandle(CreateThread(NULL, 0, capture_console, &captures[i], 0, NULL));
+    }
+
+    CloseHandle(CreateThread(NULL, 0, capture_debug, NULL, 0, NULL));
+
+    if (!consoleOut) consoleOut = stdout;
+    if (!consoleErr) consoleErr = stderr;
 }
 
 static volatile LONG initReturned;
@@ -426,11 +547,11 @@ static const char *asio_error_text(ASIOError error)
 static void log_line(const char *format, ...)
 {
     va_list args;
-    putchar('\n');
+    fputc('\n', consoleOut);
     va_start(args, format);
-    vprintf(format, args);
+    vfprintf(consoleOut, format, args);
     va_end(args);
-    putchar('\n');
+    fputc('\n', consoleOut);
     g.lineWidth = 0;
 }
 
@@ -533,8 +654,8 @@ static int is_folder_w(const wchar_t *path)
 
 static void print_wide_path(const wchar_t *path)
 {
-    if (!wcsncmp(path, L"\\\\?\\UNC\\", 8)) printf("\\\\%ls", path + 8);
-    else printf("%ls", path + (wcsncmp(path, L"\\\\?\\", 4) ? 0 : 4));
+    if (!wcsncmp(path, L"\\\\?\\UNC\\", 8)) fprintf(consoleOut, "\\\\%ls", path + 8);
+    else fprintf(consoleOut, "%ls", path + (wcsncmp(path, L"\\\\?\\", 4) ? 0 : 4));
 }
 
 static int playlistMode, instrumentMode;
@@ -4458,22 +4579,53 @@ static void sound_name(char *out, size_t size)
     }
 }
 
+/* A sound names its plugin the way the plugin names itself, which usually differs from
+   the file name only by punctuation or a trailing "Plugin": "TAL NoiseMaker Plugin" in
+   TAL-NoiseMaker.dll. Comparing the names settles the library without building an
+   instance of every plugin in the folder to ask it which one it is. */
+static int same_plugin(const char *file, const char *name)
+{
+    char a[VST_NAME], b[VST_NAME];
+    size_t length = 0;
+
+    for (const char *at = file; *at && *at != '.'; at++)
+        if (isalnum((unsigned char)*at) && length < sizeof a - 1) a[length++] = (char)tolower(*at);
+    a[length] = 0;
+
+    for (length = 0; *name && length < sizeof b - 1; name++)
+        if (isalnum((unsigned char)*name)) b[length++] = (char)tolower(*name);
+    b[length] = 0;
+
+    const char *shortName = strlen(a) <= strlen(b) ? a : b;
+    const char *longName = strlen(a) <= strlen(b) ? b : a;
+    size_t common = strlen(shortName);
+    if (!common || strncmp(longName, shortName, common)) return 0;
+    if (!longName[common]) return 1;
+
+    static const char *noise[] = {"plugin", "vst", "vsti", "x64", "dll"};
+    for (int i = 0; i < 5; i++)
+        if (!strcmp(longName + common, noise[i])) return 1;
+    return 0;
+}
+
 static int find_vst_library(const char *name)
 {
     for (int i = 0; i < vstLibraryCount; i++) {
         size_t length = strlen(vstNames[i]);
         if (length > 4 && !_stricmp(vstNames[i] + length - 4, ".dll")) length -= 4;
         if (!_strnicmp(vstNames[i], name, length) && !name[length]) return i;
+        if (same_plugin(vstNames[i], name)) return i;
     }
 
-    /* A library is asked its effect name once: building an instance to ask again makes
-       the plugin construct and destroy its whole state on every sound it restores. */
+    /* Only a plugin whose name says nothing about its file name gets this far, and it is
+       asked once. One that is already open is asked, never opened a second time. */
     for (int i = 0; i < vstLibraryCount; i++) {
         if (!vstEffectNames[i][0]) {
-            AEffect *effect = create_effect(vstLibraries[i]);
+            AEffect *open = vstInstances[i];
+            AEffect *effect = open ? open : create_effect(vstLibraries[i]);
             if (!effect || !effect->dispatcher) continue;
             effect_name(effect, vstEffectNames[i], VST_NAME);
-            vst_call(effect, effClose, 0, 0, NULL, 0);
+            if (!open) vst_call(effect, effClose, 0, 0, NULL, 0);
         }
         if (vstEffectNames[i][0] && !_stricmp(vstEffectNames[i], name)) return i;
     }
@@ -4575,8 +4727,8 @@ static int restore_sound(int number)
 /* Overwrites the meters line in place, so a message leaves no blank line behind it. */
 static void console_line(const char *text)
 {
-    printf("\r%-*s\n", g.lineWidth, text);
-    fflush(stdout);
+    fprintf(consoleOut, "\r%-*s\n", g.lineWidth, text);
+    fflush(consoleOut);
     g.lineWidth = 0;
 }
 
@@ -5388,19 +5540,19 @@ static void list_devices(void)
     char names[64][128];
     int drivers = list_drivers(names, 64);
 
-    printf("ASIO drivers:\n");
-    for (int i = 0; i < drivers; i++) printf("  %d  %s\n", i, names[i]);
-    if (!drivers) printf("  (none)\n");
+    fprintf(consoleOut, "ASIO drivers:\n");
+    for (int i = 0; i < drivers; i++) fprintf(consoleOut, "  %d  %s\n", i, names[i]);
+    if (!drivers) fprintf(consoleOut, "  (none)\n");
 
-    printf("MIDI inputs:\n");
+    fprintf(consoleOut, "MIDI inputs:\n");
     UINT inputs = midiInGetNumDevs();
     for (UINT i = 0; i < inputs; i++) {
         MIDIINCAPS caps;
         MMRESULT result = midiInGetDevCaps(i, &caps, sizeof caps);
-        if (result == MMSYSERR_NOERROR) printf("  %u  %s\n", i, caps.szPname);
-        else printf("  %u  (no details: %s)\n", i, midi_error_text(result));
+        if (result == MMSYSERR_NOERROR) fprintf(consoleOut, "  %u  %s\n", i, caps.szPname);
+        else fprintf(consoleOut, "  %u  (no details: %s)\n", i, midi_error_text(result));
     }
-    if (!inputs) printf("  (none)\n");
+    if (!inputs) fprintf(consoleOut, "  (none)\n");
 }
 
 static HANDLE consoleInput;
@@ -5499,8 +5651,8 @@ static void draw_meters(void)
     }
     g.lineWidth = length;
 
-    printf("\r%s", line);
-    fflush(stdout);
+    fprintf(consoleOut, "\r%s", line);
+    fflush(consoleOut);
 }
 
 /* An instrument jamming into this group is asked to stop and write its take while
@@ -5586,8 +5738,8 @@ static int stream_midi(const char *device, int channel)
     g.midiStream = 1;
     if (open_midi_input(device) != 0) return 1;
 
-    if (channel) printf("streaming MIDI input '%s', channel %d\n", device, channel);
-    else printf("streaming MIDI input '%s', all channels\n", device);
+    if (channel) fprintf(consoleOut, "streaming MIDI input '%s', channel %d\n", device, channel);
+    else fprintf(consoleOut, "streaming MIDI input '%s', all channels\n", device);
 
     while (!g.quit) Sleep(5);
 
@@ -5597,7 +5749,7 @@ static int stream_midi(const char *device, int channel)
 
 static void usage(void)
 {
-    printf(
+    fprintf(consoleOut,
         "restless_virtuoso - play ASIO inputs on ASIO outputs\n"
         "\n"
         "Usage:\n"
@@ -5738,8 +5890,8 @@ static int parse_args(int argc, char **argv, Options *options)
 static void pause_on_error(int exitCode)
 {
     if (!exitCode) return;
-    printf("\nPress Enter to close...");
-    fflush(stdout);
+    fprintf(consoleOut, "\nPress Enter to close...");
+    fflush(consoleOut);
     getchar();
 }
 
@@ -5795,7 +5947,7 @@ static int run(int argc, char **argv, const wchar_t *folder)
         } else if (resolve_midi_in(options.instrument) >= 0) {
             if (!options.samplesPath[0] && !options.vstsPath[0]) {
                 int result = stream_midi(options.instrument, options.inputChannel);
-                printf("\n");
+                fprintf(consoleOut, "\n");
                 return result;
             }
             if (options.inputChannel > 16) {
@@ -5903,21 +6055,21 @@ static int run(int argc, char **argv, const wchar_t *folder)
     rating_start();
 
     if (playlistMode) {
-        printf("  %d audio files mixed from ", stemCount);
+        fprintf(consoleOut, "  %d audio files mixed from ", stemCount);
         print_wide_path(playlistFolder);
-        printf("\n");
+        fprintf(consoleOut, "\n");
     }
     print_sound("sound ");
 
     if (g.midiInIndex >= 0) {
         MIDIINCAPS caps;
         if (midiInGetDevCaps((UINT)g.midiInIndex, &caps, sizeof caps) == MMSYSERR_NOERROR)
-            printf("  MIDI in %d (%s)%s\n", g.midiInIndex, caps.szPname, g.synthEnabled ? ", sine synth on" : "");
+            fprintf(consoleOut, "  MIDI in %d (%s)%s\n", g.midiInIndex, caps.szPname, g.synthEnabled ? ", sine synth on" : "");
     }
     if (g.midiOutIndex >= 0) {
         MIDIOUTCAPS caps;
         if (midiOutGetDevCaps((UINT)g.midiOutIndex, &caps, sizeof caps) == MMSYSERR_NOERROR)
-            printf("  MIDI thru -> %d (%s)\n", g.midiOutIndex, caps.szPname);
+            fprintf(consoleOut, "  MIDI thru -> %d (%s)\n", g.midiOutIndex, caps.szPname);
     }
 
     if (playlistMode) publish_palette(playlistFolder);
@@ -6014,7 +6166,7 @@ done:
     shutdown_monitor();
     DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();
-    printf("\n");
+    fprintf(consoleOut, "\n");
     return exitCode;
 }
 
@@ -6038,6 +6190,7 @@ int main(int argc, char **argv)
 {
     SetUnhandledExceptionFilter(crash_handler);
     open_error_log();
+    capture_plugins();
     srand((unsigned)GetTickCount64());
     wchar_t *folder = dropped_folder();
     int exitCode = run(argc - (folder ? 1 : 0), argv + (folder ? 1 : 0), folder);
