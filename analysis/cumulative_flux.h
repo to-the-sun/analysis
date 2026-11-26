@@ -45,6 +45,7 @@ typedef struct {
     int buffer_updated;
     double highest_peak_ms;
     int highest_peak_valid;
+    double average_lag_ms;
     double min_score_seen;
     double max_score_seen;
     double demarcation_line;
@@ -110,6 +111,10 @@ typedef struct {
 
     // Bar Length History for Stability
     int bar_length_counts[BUFFER_LEN];
+
+    // Cumulative history averaged every 99 ms, and how many samples it holds
+    double average_lag[BUFFER_LEN];
+    long long average_lag_count;
 
     // Snapshots tracking (queue per band)
     SnapshotEntry* snapshot_heads[MAX_BANDS];
