@@ -51,6 +51,11 @@ A folder dropped onto `restless_virtuoso.exe` (or passed as the first argument) 
 played directly, as if it were the `instrument` key, and may be longer than
 `MAX_PATH`.
 
+A plain double-click, with nothing passed to it, starts a stems instance on a random
+project: every folder in `D:\[Library]\[Audio]\[Works]\[Projects]` that holds a
+`[stems]` folder is a candidate, and one is drawn. The clicked instance exits as soon
+as it has started that one. With nothing to draw from it monitors as usual.
+
 `instrument` is an ASIO driver or MIDI input name from `--list`, or the absolute path
 of a folder. A folder's audio files play together as stems and loop when the longest
 one ends. `input-channel` is the 1-based ASIO input, or the MIDI channel for a MIDI
