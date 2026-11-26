@@ -14,6 +14,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 import numpy as np
 from scipy.io import wavfile
 from scipy.signal import find_peaks
@@ -21,6 +22,12 @@ from scipy.signal import find_peaks
 WIN, HOP = 4096, 0.1
 MIN_LAG, MIN_DUR, FLOOR_DB, MAX_FRAMES = 0.5, 2.0, -50.0, 1100
 OUT, IMG = "ssm_report", "img"
+
+
+def mmss(t, prec=1):
+    m = int(t // 60)
+    return f"{m}:{t - 60 * m:0{2 if not prec else 3 + prec}.{prec}f}"
+
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -76,6 +83,7 @@ __SECTIONS__
 const GEO = __GEO__;
 const views = [];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const mmss = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, "0")}`;
 
 document.querySelectorAll("figure.ssm").forEach((fig) => {
   const v = {
@@ -166,7 +174,7 @@ function draw() {
   views.forEach((v) => v.place(v.audio.currentTime));
   views.forEach((v) => {
     const clock = v.fig.closest("section").querySelector(".clock");
-    if (clock) clock.textContent = v.audio.currentTime.toFixed(2) + " s";
+    if (clock) clock.textContent = mmss(v.audio.currentTime);
   });
 }
 
@@ -194,7 +202,7 @@ SECTION = """<section>
   <div class="head"><h2>__NAME__</h2><span>__META__</span></div>
   <div class="bar">
     <audio controls preload="metadata" src="__SRC__"></audio>
-    <span class="clock">0.00 s</span>
+    <span class="clock">0:00.00</span>
     <span class="hint">cursor = now on each matrix · drag a square to zoom · click to jump</span>
   </div>
   <div class="grid">
@@ -311,8 +319,12 @@ def figure(S, duration, t, curve, chosen, title, path):
                                    gridspec_kw={"width_ratios": [1.15, 1]})
     axS.imshow(S, origin="upper", cmap="magma", vmin=0.55, vmax=1.0,
                extent=[0, duration, duration, 0], interpolation="nearest")
-    axS.set_xlabel("time in portion (s)")
-    axS.set_ylabel("time in portion (s)")
+    clock = FuncFormatter(lambda v, _: mmss(v))
+    for axis in (axS.xaxis, axS.yaxis, axC.xaxis):
+        axis.set_major_locator(MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
+        axis.set_major_formatter(clock)
+    axS.set_xlabel("time in portion (m:ss)")
+    axS.set_ylabel("time in portion (m:ss)")
     axS.set_title("self-similarity", loc="left", fontsize=10)
     axC.plot(t, curve, color="#1b3b52", lw=1.5)
     axC.axhline(curve.max(), color="#c0392b", lw=0.9, ls="--")
@@ -320,11 +332,11 @@ def figure(S, duration, t, curve, chosen, title, path):
     if chosen:
         at = curve[np.argmin(abs(t - chosen))]
         axC.plot([chosen], [at], "o", ms=6, mfc="#c0392b", mec="white", zorder=5)
-        axC.annotate(f"{chosen:.2f} s", (chosen, at), xytext=(8, 8),
+        axC.annotate(mmss(chosen, 2), (chosen, at), xytext=(8, 8),
                      textcoords="offset points", fontsize=9, color="#c0392b", weight="bold")
     axC.set_xlim(0, min(duration, 8 * (chosen or 1.5)))
     axC.set_ylim(max(0, curve.min() - 0.05), 1.02)
-    axC.set_xlabel("lag (s)")
+    axC.set_xlabel("lag (m:ss)")
     axC.set_ylabel("mean similarity on the diagonal")
     axC.set_title("lag curve", loc="left", fontsize=10)
     axC.grid(alpha=0.22)
@@ -345,30 +357,30 @@ def palette_section(wav, out):
         slice_ = audio[int(start * sr):int(end * sr)]
         rms = 20 * np.log10(np.sqrt(np.mean(slice_.astype(np.float64) ** 2)) + 1e-12) if len(slice_) else -240.0
         if end - start < MIN_DUR or rms < FLOOR_DB:
-            quiet.append(f"{start:.1f}–{end:.1f} s")
+            quiet.append(f"{mmss(start)}–{mmss(end)}")
             continue
         X, step = features(chroma[int(start / HOP):int(end / HOP)])
         S = X @ X.T
         length = len(X) * step
         t, curve, chosen = period(S, step, length)
         stem = f"{wav.stem}_{i:02d}"
-        title = f"sound {label} · {start:.1f}–{end:.1f} s · {length:.1f} s"
+        title = f"sound {label} · {mmss(start)}–{mmss(end)} · {mmss(length)}"
         box = figure(S, length, t, curve, chosen, title, out / IMG / f"{stem}.png")
         geo = geo or box
         figures.append({
             "img": f"{IMG}/{stem}.png", "start": start, "dur": length, "title": title,
-            "note": (f"lag peak {chosen:.2f} s" if chosen else "no lag peak")
+            "note": (f"lag peak {mmss(chosen, 2)}" if chosen else "no lag peak")
                     + f" · {len(X)} × {step:.2f} s frames · RMS {rms:.0f} dBFS"
         })
-        print(f"  {label:>10s} {start:8.1f}–{end:8.1f} s  {length:7.1f} s  "
-              f"{'period ' + format(chosen, '.2f') + ' s' if chosen else 'no period'}")
+        print(f"  {label:>10s} {mmss(start):>9s}–{mmss(end):<9s}  {mmss(length):>9s}  "
+              f"{'period ' + mmss(chosen, 2) if chosen else 'no period'}")
     if not figures:
         print(f"  {wav.name}: no usable sound stretch")
         return None
     body = SECTION
     for key, value in [
         ("__NAME__", html.escape(wav.name)),
-        ("__META__", f"{duration:.1f} s · {sr} Hz · {len(figures)} of "
+        ("__META__", f"{mmss(duration)} · {sr} Hz · {len(figures)} of "
                      f"{len(figures) + len(quiet)} stretches with significant audio"),
         ("__SRC__", html.escape("../" + wav.name, quote=True)),
         ("__FIGURES__", "\n".join(FIGURE
