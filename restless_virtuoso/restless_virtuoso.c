@@ -990,6 +990,8 @@ static void log_playlist(const char *event, double position)
     }
 }
 
+static void archive_stems(const wchar_t *folder);
+
 static int start_playlist_w(const wchar_t *folder)
 {
     wchar_t *path = long_path(folder);
@@ -997,6 +999,7 @@ static int start_playlist_w(const wchar_t *folder)
         log_error("Could not resolve the folder path.\n");
         return -1;
     }
+    archive_stems(path);
     if (scan_audio_files(path) <= 0) {
         log_error("Could not find any audio files in '%ls'.\n", path);
         free(path);
@@ -4034,6 +4037,239 @@ static int mix_path(wchar_t *out, size_t size)
     wmemcpy(out + root, playlistFolder + start, end - start);
     wcscpy(out + root + (end - start), L".wav");
     return 0;
+}
+
+/* A stems instance archives its project into [versions] as it starts, before it can
+   change anything: the folder it plays, the sibling song.json and the master mix,
+   which is the one in the project folder or its copy in [Works]. The archive is
+   named after the master, and audio is already compressed, so entries are stored. */
+
+typedef struct {
+    char name[512];
+    uint32_t crc, size, offset;
+} ZipEntry;
+
+typedef struct {
+    FILE *file;
+    ZipEntry *entries;
+    int count, alloc;
+    uint32_t offset;
+} ZipWriter;
+
+static void zip_put16(FILE *file, unsigned value)
+{
+    fputc((int)(value & 0xff), file);
+    fputc((int)((value >> 8) & 0xff), file);
+}
+
+static void zip_put32(FILE *file, uint32_t value)
+{
+    zip_put16(file, value & 0xffffu);
+    zip_put16(file, value >> 16);
+}
+
+static uint32_t zip_crc(uint32_t crc, const unsigned char *bytes, size_t count)
+{
+    static uint32_t table[256];
+    if (!table[1]) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t value = i;
+            for (int bit = 0; bit < 8; bit++)
+                value = value & 1 ? 0xedb88320u ^ (value >> 1) : value >> 1;
+            table[i] = value;
+        }
+    }
+
+    crc = ~crc;
+    while (count--) crc = table[(crc ^ *bytes++) & 0xff] ^ (crc >> 8);
+    return ~crc;
+}
+
+static void zip_add(ZipWriter *zip, const wchar_t *path, const char *name)
+{
+    if (zip->count == zip->alloc) {
+        int alloc = zip->alloc ? zip->alloc * 2 : 16;
+        ZipEntry *entries = realloc(zip->entries, (size_t)alloc * sizeof *entries);
+        if (!entries) return;
+        zip->entries = entries;
+        zip->alloc = alloc;
+    }
+
+    FILE *in = _wfopen(path, L"rb");
+    if (!in) {
+        log_error("Could not archive '%ls'.\n", path);
+        return;
+    }
+
+    ZipEntry *entry = &zip->entries[zip->count];
+    snprintf(entry->name, sizeof entry->name, "%s", name);
+    size_t nameLength = strlen(entry->name);
+    entry->offset = zip->offset;
+
+    zip_put32(zip->file, 0x04034b50);
+    zip_put16(zip->file, 20);
+    zip_put16(zip->file, 0x0800); /* UTF-8 names */
+    zip_put16(zip->file, 0);      /* stored */
+    zip_put16(zip->file, 0);      /* time */
+    zip_put16(zip->file, 0);      /* date */
+    long crcAt = ftell(zip->file);
+    zip_put32(zip->file, 0);
+    zip_put32(zip->file, 0);
+    zip_put32(zip->file, 0);
+    zip_put16(zip->file, (unsigned)nameLength);
+    zip_put16(zip->file, 0); /* extra length */
+    fwrite(entry->name, 1, nameLength, zip->file);
+
+    unsigned char buffer[65536];
+    uint32_t crc = 0, size = 0;
+    size_t read;
+    while ((read = fread(buffer, 1, sizeof buffer, in)) > 0) {
+        crc = zip_crc(crc, buffer, read);
+        fwrite(buffer, 1, read, zip->file);
+        size += (uint32_t)read;
+    }
+    fclose(in);
+
+    long end = ftell(zip->file);
+    fseek(zip->file, crcAt, SEEK_SET);
+    zip_put32(zip->file, crc);
+    zip_put32(zip->file, size);
+    zip_put32(zip->file, size);
+    fseek(zip->file, end, SEEK_SET);
+
+    entry->crc = crc;
+    entry->size = size;
+    zip->offset = (uint32_t)end;
+    zip->count++;
+}
+
+static void zip_add_folder(ZipWriter *zip, const wchar_t *folder, const char *prefix)
+{
+    size_t length = wcslen(folder);
+    wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
+    if (!pattern) return;
+    swprintf(pattern, length + 3, L"%ls\\*", folder);
+
+    WIN32_FIND_DATAW entry;
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L"..")) continue;
+
+        size_t nameLength = wcslen(entry.cFileName);
+        wchar_t *path = malloc((length + nameLength + 2) * sizeof *path);
+        if (!path) continue;
+        swprintf(path, length + nameLength + 2, L"%ls\\%ls", folder, entry.cFileName);
+
+        char narrow[STEM_NAME + 1], name[512];
+        WideCharToMultiByte(CP_UTF8, 0, entry.cFileName, -1, narrow, sizeof narrow, NULL, NULL);
+        int written = snprintf(name, sizeof name, "%s/%s", prefix, narrow);
+        if (written > 0 && written < (int)sizeof name) {
+            if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) zip_add_folder(zip, path, name);
+            else zip_add(zip, path, name);
+        }
+        free(path);
+    } while (FindNextFileW(find, &entry));
+    FindClose(find);
+}
+
+static void zip_finish(ZipWriter *zip)
+{
+    uint32_t start = zip->offset;
+    for (int i = 0; i < zip->count; i++) {
+        ZipEntry *entry = &zip->entries[i];
+        size_t nameLength = strlen(entry->name);
+
+        zip_put32(zip->file, 0x02014b50);
+        zip_put16(zip->file, 20);
+        zip_put16(zip->file, 20);
+        zip_put16(zip->file, 0x0800);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put32(zip->file, entry->crc);
+        zip_put32(zip->file, entry->size);
+        zip_put32(zip->file, entry->size);
+        zip_put16(zip->file, (unsigned)nameLength);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put16(zip->file, 0);
+        zip_put32(zip->file, 0);
+        zip_put32(zip->file, entry->offset);
+        fwrite(entry->name, 1, nameLength, zip->file);
+    }
+
+    long end = ftell(zip->file);
+    zip_put32(zip->file, 0x06054b50);
+    zip_put16(zip->file, 0);
+    zip_put16(zip->file, 0);
+    zip_put16(zip->file, (unsigned)zip->count);
+    zip_put16(zip->file, (unsigned)zip->count);
+    zip_put32(zip->file, (uint32_t)end - start);
+    zip_put32(zip->file, start);
+    zip_put16(zip->file, 0);
+
+    fclose(zip->file);
+    free(zip->entries);
+}
+
+static void archive_stems(const wchar_t *folder)
+{
+    static const wchar_t works[] = L"D:\\[Library]\\[Audio]\\[Works]";
+    wchar_t project[STEM_NAME + 1], stems[STEM_NAME + 1], song[1400], master[1400], copy[1400];
+    wchar_t versions[1400], archive[1400];
+    size_t root = project_root(folder), end = wcslen(folder);
+    while (end > 3 && (folder[end - 1] == L'\\' || folder[end - 1] == L'/')) end--;
+
+    size_t stemsStart = end;
+    while (stemsStart > 3 && folder[stemsStart - 1] != L'\\' && folder[stemsStart - 1] != L'/') stemsStart--;
+    size_t projectEnd = root ? root - 1 : 0, projectStart = projectEnd;
+    while (projectStart > 3 && folder[projectStart - 1] != L'\\' && folder[projectStart - 1] != L'/') projectStart--;
+
+    size_t projectLength = projectEnd - projectStart, stemsLength = end - stemsStart;
+    if (root <= 4 || projectEnd <= projectStart || !stemsLength) return;
+    if (projectLength > STEM_NAME || stemsLength > STEM_NAME || root + projectLength + 20 > 1400) return;
+
+    wmemcpy(project, folder + projectStart, projectLength);
+    project[projectLength] = 0;
+    wmemcpy(stems, folder + stemsStart, stemsLength);
+    stems[stemsLength] = 0;
+    wmemcpy(song, folder, root);
+    wcscpy(song + root, L"song.json");
+    wmemcpy(versions, folder, root);
+    wcscpy(versions + root, L"[versions]");
+    swprintf(archive, 1400, L"%ls\\%ls.zip", versions, project);
+    swprintf(master, 1400, L"%.*ls%ls.wav", (int)root, folder, project);
+    swprintf(copy, 1400, L"%ls\\%ls.wav", works, project);
+
+    make_folders(versions);
+    FILE *file = _wfopen(archive, L"wb");
+    if (!file) {
+        log_error("Could not write '%ls'.\n", archive);
+        return;
+    }
+
+    ZipWriter zip;
+    memset(&zip, 0, sizeof zip);
+    zip.file = file;
+
+    char folderName[STEM_NAME + 1], projectName[STEM_NAME + 1], entry[STEM_NAME + 16];
+    WideCharToMultiByte(CP_UTF8, 0, stems, -1, folderName, sizeof folderName, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, project, -1, projectName, sizeof projectName, NULL, NULL);
+    zip_add_folder(&zip, folder, folderName);
+
+    if (GetFileAttributesW(song) != INVALID_FILE_ATTRIBUTES) zip_add(&zip, song, "song.json");
+    snprintf(entry, sizeof entry, "%s.wav", projectName);
+    if (GetFileAttributesW(master) != INVALID_FILE_ATTRIBUTES) zip_add(&zip, master, entry);
+    if (GetFileAttributesW(copy) != INVALID_FILE_ATTRIBUTES) {
+        snprintf(entry, sizeof entry, "[Works]/%s.wav", projectName);
+        zip_add(&zip, copy, entry);
+    }
+    zip_finish(&zip);
+    log_trace("archived the project into '%ls'\n", archive);
 }
 
 static const char *song_field(const char *at, char *key, size_t size)

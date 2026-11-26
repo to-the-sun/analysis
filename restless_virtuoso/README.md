@@ -131,6 +131,14 @@ driver's rate. `.wav`, `.wave`, `.aif`, `.aiff`, `.flac`, `.mp3`, `.ogg` and `.o
 picked up, and each one is decoded as WAV, AIFF, FLAC, MP3 or Ogg Vorbis by its content
 rather than its extension.
 
+Before a stems instance plays anything it archives the project into a `[versions]`
+folder beside the stems folder, named after the master mix, e.g.
+`[versions]\2026-11-20-00-41-59.zip`. The archive holds the stems folder, the sibling
+`song.json` and the master mix from the project folder, plus the copy of it in
+`D:\[Library]\[Audio]\[Works]` under `[Works]` when that exists. An archive already
+there under that name is replaced, so it always holds the state the instance started
+from.
+
 ## Loop recordings
 
 The instance playing a folder sends a loop start cue to every other running instance
