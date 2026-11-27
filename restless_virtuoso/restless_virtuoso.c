@@ -41,6 +41,7 @@
 #define DEFAULT_DRIVER "Focusrite USB ASIO"
 #define TASTE_START 1
 #define TASTE_GATE 0.001f
+#define NOISE_FLOOR 0.001f
 
 typedef struct {
     const char *driver, *in, *out, *midiIn, *midiOut;
@@ -5284,6 +5285,23 @@ static float read_master_volume(void)
    written out, so every run starts again from 1.0. */
 static float soundPeaks[SOUND_MAX + 1], inputPeak, synthPeak;
 
+/* Anything at or below the noise floor is digital silence before the gain and the
+   analyzers see it, so an idle device is neither lifted nor scored. */
+static int audible(const float *samples, int frames)
+{
+    for (int i = 0; i < frames; i++)
+        if (fabsf(samples[i]) > NOISE_FLOOR) return 1;
+    return 0;
+}
+
+static void noise_floor(float *samples, int channels, int frames)
+{
+    for (int c = 0; c < channels; c++) {
+        float *channel = samples + (size_t)c * frames;
+        if (!audible(channel, frames)) memset(channel, 0, (size_t)frames * sizeof *channel);
+    }
+}
+
 static void auto_gain(float *samples, int channels, int frames, float *peak)
 {
     float highest = *peak;
@@ -5316,6 +5334,7 @@ static void process_buffer(int32_t index)
     for (int c = 0; c < g.nIn; c++) {
         float *samples = g.inputFloats + (size_t)c * frames;
         sample_to_float(g.bufferInfo[c].buffers[index], g.inFormat[c], samples, frames);
+        noise_floor(samples, 1, frames);
 
         float peak = 0.0f;
         for (int i = 0; i < frames; i++) {
@@ -5331,12 +5350,14 @@ static void process_buffer(int32_t index)
     if (g.synthEnabled || instrumentMode) drain_midi();
     if (g.synthEnabled) {
         synth_render(g.synthFloats, frames);
+        noise_floor(g.synthFloats, 1, frames);
         auto_gain(g.synthFloats, 1, frames, &synthPeak);
     }
 
     if (playlistMode) render_playlist(g.fileFloats, g.nOut, frames);
     else if (instrumentMode) {
         render_instruments(g.fileFloats, g.nOut, frames);
+        noise_floor(g.fileFloats, g.nOut, frames);
         auto_gain(g.fileFloats, g.nOut, frames, &soundPeaks[g.soundNumber]);
         taste_tick(frames);
     }
@@ -5356,7 +5377,7 @@ static void process_buffer(int32_t index)
         sample_from_float(g.mixFloats, output, g.outFormat[j], frames);
         if (take.active) take_mix(g.mixFloats, frames);
         if (j == 0) {
-            rating_audio(g.mixFloats, frames);
+            if (audible(g.mixFloats, frames)) rating_audio(g.mixFloats, frames);
             if (recording.active) recording_audio(g.mixFloats, frames);
         }
     }
