@@ -1454,7 +1454,7 @@ static float *ratingFeed;
 static int ratingFeedSize, ratingHead, ratingTail, ratingCount;
 static int ratingSound, ratingStarted;
 
-static volatile LONG ratingRequest, ratingLoop;
+static volatile LONG ratingRequest, ratingLoop, ratingReset;
 static int ratingRequestMode, ratingRequestSound;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
@@ -1772,7 +1772,8 @@ static DWORD WINAPI rating_worker(void *unused)
         if (ratingQuit) break;
 
         LONG request = InterlockedCompareExchange(&ratingRequest, 0, 0);
-        if (request != applied) {
+        LONG reset = InterlockedExchange(&ratingReset, 0);
+        if (request != applied || reset) {
             int mode, sound;
             wchar_t folder[1024];
 
@@ -1782,6 +1783,21 @@ static DWORD WINAPI rating_worker(void *unused)
             wcsncpy(folder, ratingRequestFolder, 1023);
             folder[1023] = 0;
             LeaveCriticalSection(&ratingLock);
+
+            /* A new sound or the end of jamming starts the group over: its analyzers
+               go, so no score from before the change survives into the new rating. */
+            if (reset) {
+                for (int i = 0; i < ratingCopyCount; i++) {
+                    analyzer_destroy(ratingCopies[i].analyzer);
+                    free(ratingCopies[i].block);
+                }
+                ratingCopyCount = 0;
+                analyzer_destroy(ratingOwn);
+                ratingOwn = NULL;
+                ratingStepHead = ratingStepCount = ratingCount = 0;
+                ratingSum = ratingValue = ratingBurst = 0.0;
+                pushed = 0;
+            }
 
             if (rating_sync(mode, folder, sound)) pushed = 0;
             applied = request;
@@ -2703,6 +2719,7 @@ static void rating_poll(void)
     static int jamming;
     if (jamming && mode != RATING_JAMMING) {
         recording_stop(0);
+        InterlockedExchange(&ratingReset, 1);
         ratingValue = 0.0;
         ratingBurst = 0.0;
     }
@@ -2727,6 +2744,7 @@ static void rating_poll(void)
         recording_stop(1);
         /* The rating that ended the take belongs to the sound before it, so the new one
            waits for a score of its own instead of starting a take that is at once dropped. */
+        InterlockedExchange(&ratingReset, 1);
         ratingValue = 0.0;
         ratingBurst = 0.0;
     }
