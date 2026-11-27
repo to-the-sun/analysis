@@ -6037,7 +6037,7 @@ static void draw_meters(void)
 
     length += snprintf(line + length, sizeof line - (size_t)length, "%sbar %.0f ms  rating %.6f%s  score %.6f",
                        length ? "  " : "", ratingBar, rating_current(),
-                       instrumentMode && recording.active ? " @" : "", ratingBurst);
+                       instrumentMode && recording.active ? " O" : "", ratingBurst);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));
