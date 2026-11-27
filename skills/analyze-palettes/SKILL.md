@@ -632,15 +632,16 @@ not proof of playback or seeking.
 The finished batch is a folder, not an archive: `artifacts/<batch>/` holds the
 master WAV beside the `pattern_reports/` folder, and `[processed]` receives it
 as one regular folder per archive. Nothing is zipped.
-Include the index, all HTML reports, the generated `[palettes]/` WAVs, passes
-and sounds files, the `[data]/` chunks and audio copies, and when a song was built,
-`song.html` plus
-`[stems]/` (stems and `[stems]/[data]/`). The complete SSM report travels with
-them, as `pattern_reports/[palettes]/ssm_report/` with its `index.html` and every
-PNG. Confirm `ssm_report/index.html` and all of its images are in the folder
-before uploading. Several palettes change none of this:
-they share the folder and the one master. Package each archive's batch
-separately when the folder held more than one archive. Report the final file count and total size.
+
+It holds the index, all HTML reports, the generated `[palettes]/` WAVs, passes
+and sounds files, the `[data]/` chunks and audio copies, and when a song was
+built, `song.html` plus `[stems]/` (stems and `[stems]/[data]/`). The complete SSM
+report travels with them, as `pattern_reports/[palettes]/ssm_report/` with its
+`index.html` and every PNG; confirm `ssm_report/index.html` and all of its images
+are in the folder before uploading. Several palettes change none of this: they
+share the folder and the one master. Package each archive's batch separately when
+the input folder held more than one archive. Report the final file count and
+total size.
 
 ### 8a. Upload it
 
