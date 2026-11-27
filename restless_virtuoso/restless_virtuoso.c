@@ -1456,7 +1456,10 @@ static RatingCopy *ratingCopies;
 static int ratingCopyCount, ratingCopyAlloc;
 static TransientAnalyzer *ratingOwn;
 static Track *ratingStems;
+static wchar_t *ratingStemFiles[QUEUE_FILES];
 static double ratingStemLeads[QUEUE_FILES];
+static ULONGLONG ratingStemWritten[QUEUE_FILES];
+static wchar_t ratingStemsFolder[1024];
 static int ratingStemCount;
 
 static HANDLE ratingThread, ratingWake, spawnedStems;
@@ -1476,8 +1479,6 @@ static int ratingRequestMode, ratingRequestSound;
 static wchar_t ratingRequestFolder[1024];
 static int ratingRequestedMode = -1, ratingRequestedStems, ratingRequestedGeneration;
 static wchar_t ratingRequestedFolder[1024];
-static int ratingBuiltMode = -1, ratingBuiltSound;
-static wchar_t ratingBuiltFolder[1024];
 
 typedef struct {
     volatile LONG active;
@@ -1536,7 +1537,7 @@ static int rating_take(float *out, int wanted)
     return taken;
 }
 
-static void rating_drop(int fresh)
+static void rating_drop(void)
 {
     for (int i = 0; i < ratingCopyCount; i++) {
         analyzer_destroy(ratingCopies[i].analyzer);
@@ -1548,21 +1549,23 @@ static void rating_drop(int fresh)
     analyzer_destroy(ratingOwn);
     ratingOwn = NULL;
 
-    for (int i = 0; i < ratingStemCount; i++) free(ratingStems[i].samples);
+    for (int i = 0; i < ratingStemCount; i++) {
+        free(ratingStems[i].samples);
+        free(ratingStemFiles[i]);
+    }
     free(ratingStems);
     ratingStems = NULL;
     ratingStemCount = 0;
+    ratingStemsFolder[0] = 0;
 
     memset(&ratingScores, 0, sizeof ratingScores);
     ratingScores.max_peak = 1.0;
     ratingScores.min_score_seen = DBL_MAX;
     ratingScores.max_score_seen = -DBL_MAX;
-    if (fresh) {
-        ratingValue = 0.0;
-        ratingBurst = 0.0;
-        ratingStepHead = ratingStepCount = ratingCount = 0;
-        ratingSum = 0.0;
-    }
+    ratingValue = 0.0;
+    ratingBurst = 0.0;
+    ratingStepHead = ratingStepCount = ratingCount = 0;
+    ratingSum = 0.0;
 
     EnterCriticalSection(&ratingLock);
     ratingCount = ratingHead = ratingTail = 0;
@@ -1601,72 +1604,157 @@ static int rating_add(const Track *track, double lead)
     return 1;
 }
 
-static int rating_load(const wchar_t *folder, int sound)
+/* The folder's stems are decoded once and kept, so a rescan only adds, drops or
+   re-reads the files that actually changed and the copies holding the rest keep
+   their analyzers. */
+static void rating_load(const wchar_t *folder)
 {
+    if (wcscmp(folder, ratingStemsFolder)) {
+        for (int i = 0; i < ratingStemCount; i++) {
+            free(ratingStems[i].samples);
+            free(ratingStemFiles[i]);
+        }
+        if (ratingStems) memset(ratingStems, 0, (size_t)ratingStemCount * sizeof *ratingStems);
+        ratingStemCount = 0;
+        wcsncpy(ratingStemsFolder, folder, 1023);
+        ratingStemsFolder[1023] = 0;
+    }
+    if (!ratingStems && !(ratingStems = calloc(QUEUE_FILES, sizeof *ratingStems))) return;
+
     wchar_t *path = long_path(folder);
-    if (!path) return 0;
+    if (!path) return;
 
     size_t length = wcslen(path);
     wchar_t *pattern = malloc((length + 3) * sizeof *pattern);
-    wchar_t *files[QUEUE_FILES];
-    int count = 0;
-
-    if (pattern) {
-        WIN32_FIND_DATAW entry;
-        swprintf(pattern, length + 3, L"%ls\\*", path);
-        HANDLE find = FindFirstFileW(pattern, &entry);
-        free(pattern);
-        if (find != INVALID_HANDLE_VALUE) {
-            do {
-                if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || count == QUEUE_FILES) continue;
-                if (!is_audio_name(entry.cFileName)) continue;
-
-                size_t nameLength = wcslen(entry.cFileName);
-                wchar_t *file = malloc((length + nameLength + 2) * sizeof *file);
-                if (!file) continue;
-                swprintf(file, length + nameLength + 2, L"%ls\\%ls", path, entry.cFileName);
-                files[count++] = file;
-            } while (FindNextFileW(find, &entry));
-            FindClose(find);
-        }
-    }
-    free(path);
-
-    qsort(files, (size_t)count, sizeof files[0], compare_names);
-    ratingStems = count ? calloc((size_t)count, sizeof *ratingStems) : NULL;
-    for (int i = 0; i < count; i++) {
-        int covered = sound > 0 && stem_sound_collides(files[i], sound);
-        if (!covered && ratingStems && decode_track(&ratingStems[ratingStemCount], files[i]) == 0) {
-            ratingStemLeads[ratingStemCount] = stem_lead(files[i]);
-            ratingStemCount++;
-        }
-        free(files[i]);
-    }
-    return ratingStemCount;
-}
-
-static void rating_build(int mode, const wchar_t *folder, int sound)
-{
-    /* A stem joining or dropping at a loop rebuilds the group, but the rating is an
-       average of scores over time, so only another source for them starts it again. */
-    int fresh = mode != ratingBuiltMode || sound != ratingBuiltSound || wcscmp(folder, ratingBuiltFolder);
-    ratingBuiltMode = mode;
-    ratingBuiltSound = sound;
-    wcsncpy(ratingBuiltFolder, folder, 1023);
-    ratingBuiltFolder[1023] = 0;
-    rating_drop(fresh);
-
-    load_stem_leads();
-
-    if (mode == RATING_RECITATION) {
-        for (int i = 0; i < stemCount; i++)
-            rating_add(&stems[i], stemFiles[i] ? stem_lead(stemFiles[i]) : 0.0);
+    if (!pattern) {
+        free(path);
         return;
     }
 
-    ratingOwn = analyzer_create(1.0, &ratingScores, NULL, NULL, NULL, RATING_WINDOW_MS, RATING_BANDS);
-    if (mode == RATING_JAMMING && folder[0] && rating_load(folder, sound))
-        for (int i = 0; i < ratingStemCount; i++) rating_add(&ratingStems[i], ratingStemLeads[i]);
+    char seen[QUEUE_FILES] = {0};
+    WIN32_FIND_DATAW entry;
+    swprintf(pattern, length + 3, L"%ls\\*", path);
+    HANDLE find = FindFirstFileW(pattern, &entry);
+    free(pattern);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !is_audio_name(entry.cFileName)) continue;
+
+            size_t nameLength = wcslen(entry.cFileName);
+            wchar_t *file = malloc((length + nameLength + 2) * sizeof *file);
+            if (!file) continue;
+            swprintf(file, length + nameLength + 2, L"%ls\\%ls", path, entry.cFileName);
+
+            int slot = -1;
+            for (int i = 0; i < ratingStemCount && slot < 0; i++)
+                if (ratingStemFiles[i] && !_wcsicmp(ratingStemFiles[i], file)) slot = i;
+
+            ULONGLONG written = written_time(file);
+            if (slot >= 0 && written && written == ratingStemWritten[slot]) {
+                seen[slot] = 1;
+                free(file);
+                continue;
+            }
+
+            if (slot < 0)
+                for (int i = 0; i < ratingStemCount && slot < 0; i++)
+                    if (!ratingStemFiles[i]) slot = i;
+            if (slot < 0) {
+                if (ratingStemCount == QUEUE_FILES) {
+                    free(file);
+                    continue;
+                }
+                slot = ratingStemCount++;
+            } else {
+                free(ratingStemFiles[slot]);
+                ratingStemFiles[slot] = NULL;
+                free(ratingStems[slot].samples);
+                memset(&ratingStems[slot], 0, sizeof *ratingStems);
+            }
+
+            if (decode_track(&ratingStems[slot], file) != 0) {
+                free(file);
+                continue;
+            }
+            ratingStemFiles[slot] = file;
+            ratingStemWritten[slot] = written;
+            ratingStemLeads[slot] = stem_lead(file);
+            seen[slot] = 1;
+        } while (FindNextFileW(find, &entry));
+        FindClose(find);
+    }
+    free(path);
+
+    for (int i = 0; i < ratingStemCount; i++)
+        if (ratingStemFiles[i] && !seen[i]) {
+            free(ratingStemFiles[i]);
+            ratingStemFiles[i] = NULL;
+            free(ratingStems[i].samples);
+            memset(&ratingStems[i], 0, sizeof *ratingStems);
+        }
+}
+
+typedef struct {
+    const Track *track;
+    double lead;
+} RatingMember;
+
+/* Members join and leave the group without a rebuild: the analyzers, the shared
+   scores and the rolling rating outlive them. Returns 1 when this instance's own
+   analyzer is new, which is the only thing that restarts its frame count. */
+static int rating_sync(int mode, const wchar_t *folder, int sound)
+{
+    if (mode == RATING_JAMMING && folder[0]) rating_load(folder);
+
+    int forged = 0;
+    if (mode != RATING_RECITATION) {
+        if (!ratingOwn) {
+            ratingOwn = analyzer_create(1.0, &ratingScores, NULL, NULL, NULL, RATING_WINDOW_MS, RATING_BANDS);
+            forged = 1;
+        }
+    } else if (ratingOwn) {
+        analyzer_destroy(ratingOwn);
+        ratingOwn = NULL;
+    }
+
+    load_stem_leads();
+
+    RatingMember wanted[QUEUE_FILES];
+    int count = 0;
+
+    if (mode == RATING_RECITATION) {
+        for (int i = 0; i < stemCount; i++)
+            if (stemFiles[i] && stems[i].samples && stems[i].frames)
+                wanted[count++] = (RatingMember){ &stems[i], stem_lead(stemFiles[i]) };
+    } else if (mode == RATING_JAMMING) {
+        for (int i = 0; i < ratingStemCount; i++)
+            if (ratingStemFiles[i] && !stem_sound_collides(ratingStemFiles[i], sound))
+                wanted[count++] = (RatingMember){ &ratingStems[i], ratingStemLeads[i] };
+    }
+
+    char used[QUEUE_FILES] = {0};
+    int live = 0;
+
+    for (int i = 0; i < ratingCopyCount; i++) {
+        RatingCopy *copy = &ratingCopies[i];
+        int match = -1;
+        for (int j = 0; j < count && match < 0; j++)
+            if (!used[j] && wanted[j].track == copy->track) match = j;
+        if (match < 0) {
+            analyzer_destroy(copy->analyzer);
+            free(copy->block);
+            continue;
+        }
+        used[match] = 1;
+        copy->lead = wanted[match].lead;
+        ratingCopies[live++] = *copy;
+    }
+
+    ratingCopyCount = live;
+    for (int j = 0; j < count; j++)
+        if (!used[j]) rating_add(wanted[j].track, wanted[j].lead);
+
+    return forged;
 }
 
 static void rating_copy_step(RatingCopy *copy, double elapsed, ChunkAnalysisResult *chunk)
@@ -1725,10 +1813,9 @@ static DWORD WINAPI rating_worker(void *unused)
             folder[1023] = 0;
             LeaveCriticalSection(&ratingLock);
 
-            rating_build(mode, folder, sound);
+            if (rating_sync(mode, folder, sound)) pushed = 0;
             applied = request;
             filled = 0;
-            pushed = 0;
         }
 
         if (InterlockedExchange(&ratingLoop, 0)) {
@@ -1846,7 +1933,7 @@ static void rating_stop(void)
         ratingWake = NULL;
     }
     if (ratingStarted) {
-        rating_drop(1);
+        rating_drop();
         ratingStarted = 0;
     }
     free(ratingFeed);
