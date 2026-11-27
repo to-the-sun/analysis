@@ -5,7 +5,7 @@ repo, not just the one that created this file.
 
 ## Communication 
 
-- Responses must be **short**
+- Responses must be **short**.
 - Always **summarize**.
 - Don't list a bunch of stats.
 - Turn whole paragraphs into single sentences wherever possible. 
