@@ -169,8 +169,7 @@ its audio device as the mode, e.g. `0, 0.000000 1 Focusrite USB ASIO;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
-instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
-seconds (`"3 16 drum samples.wav": 1.250000`), and a `"random_scale"` object such as
+instrument was last on. It also holds a `"random_scale"` object such as
 `{ "scale": "Dorian", "key": "D" }` once a scale was playing during the song, which
 every instance with `random_scale` set to 1 takes over when the song is started again.
 A song written before the rename stores the key as `root`, and that is read when
@@ -183,8 +182,8 @@ that has already closed still has its sound saved. An instance started on a song
 already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
 starts, and instances started later begin on it. A drum sound keeps the seed that draws
 its sample set, so it comes back the same. Closing a stems instance also writes a mix of
-every stem in its folder into the project folder, each placed at its lead-in and the lot
-peak-normalized to 1, named after the project folder itself, e.g.
+every stem in its folder into the project folder, mixed and peak-normalized to 1, named
+after the project folder itself, e.g.
 `2026-11-20-00-41-59.wav`. A copy of it goes into `D:\[Library]\[Audio]\[Works]`
 as well, when that folder exists.
 
@@ -204,12 +203,14 @@ offline tools use. An instance playing a folder runs one analyzer per stem it pl
 an instance without one running runs a single analyzer over the audio it plays. The
 analyzers of an instance share one group buffer, so their scores accumulate together
 and give the instance one rating: the average of the scores from the last 15 s of
-audio, rolling. In an instrument instance the group starts again with a new sound, so
-the rating does too. The console's last line shows it and replaces it as it changes,
+audio, rolling. In an instrument instance a new sound clears the 15 s of scores behind
+the rating, so the rating starts over from zero while the analyzers keep running. The
+console's last line shows it and replaces it as it changes,
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
-no measurement rather than a drop to zero. Every instance shows the current bar length of its group before the
+no measurement rather than a drop to zero. An instrument instance recording a take puts
+`O` after its rating. Every instance shows the current bar length of its group before the
 rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
 history averaged every 99 ms, which the analyzer gives as a time in the past and so is
 shown as its absolute value.
@@ -221,7 +222,9 @@ share a second group buffer with its own analyzer, so their scores together give
 separate jamming rating. It then records while the jamming rating is above the
 recitation rating, and its takes are written into that instance's `[stems]` folder.
 Closing that instance drops the take in progress and its memory instead of writing it
-as a project of its own, and the rating starts again from zero.
+as a project of its own, and the instrument leaves its jamming group: its stem
+analyzers go and the 15 s of scores behind the rating are cleared, so the rating
+starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
@@ -230,12 +233,12 @@ played it, e.g. `3 16 drum samples.wav`, or after its input channel and audio de
 when it has no sound, e.g. `1 Focusrite USB ASIO.wav`, and one recorded while a stems instance runs is
 placed from the loop point of the pass it overlaps most, as the song builder places a
 pattern in its pass, so the audio lands where it was played in the song. That placement
-is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
-cued that far into each loop, a take that mostly lies past a loop point carries a
-lead-in of zero and moves the others' lead-ins back with it, and the song's length is
-the last lead-in plus its stem, which the console's progress bar follows. A take with
-nothing above the noise floor is not written, and one shorter than the bar its
-instance sees is dropped first.
+is leading silence in the stem's own file: the take is written with the silence before
+it, and every stem is aligned to the earliest sound in the song, so a take that starts
+before the others pads them back and a stem that had the earliest sound lets the rest
+move forward when it goes. The song's length is its longest stem, which the console's
+progress bar follows. A take with nothing above the noise floor is not written, and one
+shorter than the bar its instance sees is dropped first.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
 `[=========---------------] 0:12/0:32 bar 2000 ms  rating 0.000000  score 0.000000`: the
@@ -266,7 +269,7 @@ recorded from its own input, and leaves the other devices' and inputs' stems pla
 - Changing the sample rate or buffer size in the control panel reopens the buffers
   automatically.
 - The master output is scaled by the Windows master volume, re-read while running.
-- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved.
+- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved. A block at or below the -60 dBFS noise floor becomes digital silence before the gain and the analyzers see it, so an idle device is neither lifted nor mistaken for sound.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
 - Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors. Whatever the plugins print goes into the same log, timestamped beside the host's lines: stdout as `plugin out:`, stderr as `plugin err:` and `OutputDebugString` as `plugin debug:`.
