@@ -312,7 +312,7 @@ one from the one-pass-per-stem grid, starts a section on a pass loop within
 That is what makes the round trip return the patterns the palette was built
 from, at the same lengths and the same entries. The builder also writes the source's mono PCM to
 `[data]/<audio-basename>/<audio-basename>.wav`, which is what the report player
-uses, so a report still plays from the packaged zip without the extracted
+uses, so a report still plays from the packaged folder without the extracted
 source. Beside the copy it writes the original passes file, as
 `[data]/<audio-basename>/<passes-basename>.txt`, so the loop placement travels
 with the audio. When the source has a sounds file, its original is copied there
@@ -503,7 +503,8 @@ covers all of them.
   not shown, not dropped silently.
 - The page plays the WAV beside the report folder (`../<palette>.wav`), which is
   why the folder must stay inside the packaged `pattern_reports/`. Do not run it
-  on the extracted source: those WAVs are not in the zip, so nothing would play.
+  on the extracted source: those WAVs are not in the packaged folder, so nothing
+would play.
 
 Use it as a cross-check on the loop lengths: an SSM lag peak that disagrees with
 a measured loop by more than a few tens of milliseconds is worth re-measuring.
@@ -628,35 +629,30 @@ not proof of playback or seeking.
 
 ## 8. Packaging
 
-```bash
-cd artifacts/<batch>
-zip -r analyze-palettes.zip '<archive-stem>.wav' pattern_reports \
-  -x 'pattern_reports/analyze-palettes.zip'
-unzip -t analyze-palettes.zip
-```
+The finished batch is a folder, not an archive: `artifacts/<batch>/` holds the
+master WAV beside the `pattern_reports/` folder, and `[processed]` receives it
+as one regular folder per archive. Nothing is zipped.
 
-The archive root holds the master WAV beside the `pattern_reports/` folder.
-Include the index, all HTML reports, the generated `[palettes]/` WAVs, passes
-and sounds files, the `[data]/` chunks and audio copies, and when a song was built,
-`song.html` plus
-`[stems]/` (stems and `[stems]/[data]/`). The complete SSM report travels with
-them, as `pattern_reports/[palettes]/ssm_report/` with its `index.html` and every
-PNG; the zip command below already takes it because it packages
-`pattern_reports/` whole. Confirm `ssm_report/index.html` and all of its images
-are in the listing before uploading. Several palettes change none of this:
-they share the folder and the one master. Package each archive's batch
-separately when the folder held more than one archive. Do not include the zip
-inside itself. Report the final size and entry count.
+It holds the index, all HTML reports, the generated `[palettes]/` WAVs, passes
+and sounds files, the `[data]/` chunks and audio copies, and when a song was
+built, `song.html` plus `[stems]/` (stems and `[stems]/[data]/`). The complete SSM
+report travels with them, as `pattern_reports/[palettes]/ssm_report/` with its
+`index.html` and every PNG; confirm `ssm_report/index.html` and all of its images
+are in the folder before uploading. Several palettes change none of this: they
+share the folder and the one master. Package each archive's batch separately when
+the input folder held more than one archive. Report the final file count and
+total size.
 
 ### 8a. Upload it
 
 ```bash
-python3 drive_upload.py analyze-palettes.zip --name '<archive-stem>-analyze-palettes.zip'
+python3 drive_upload.py 'artifacts/<batch>' --name '<archive-stem>'
 ```
 
 It refreshes an access token, finds the `[processed]` folder beside `[palettes]`
-(creating it when missing), uploads the zip as a resumable upload and prints the
-file link. Credentials are read from `GOOGLE_CLIENT_ID`,
+(creating it when missing), creates `<archive-stem>` inside it, uploads the batch
+tree into that folder keeping every subfolder, and prints the folder link and the
+file count. Credentials are read from `GOOGLE_CLIENT_ID`,
 `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN` in the environment; keep them
 out of the repo, the spec and any command line. With the three variables absent
 it prints `UPLOAD SKIPPED` and the batch still counts as packaged. Never upload
@@ -739,7 +735,5 @@ its region.
   not by report order. Do not go back to keeping whichever came first.
 - A song may not repeat a pattern to fill time or gate one out of part of the
   song: that stops it being heard whole.
-- The SSM report is part of the submission. A zip without
+- The SSM report is part of the submission. A batch folder without
   `pattern_reports/[palettes]/ssm_report/` is not finished.
-- Keep the zip out of itself. Re-run the zip after adding a download link if
-  the link target must be inside the served folder.
