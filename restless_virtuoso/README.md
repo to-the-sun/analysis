@@ -169,8 +169,7 @@ its audio device as the mode, e.g. `0, 0.000000 1 Focusrite USB ASIO;`.
 
 Beside `[palettes]` the song has a `song.json`, holding every shared sound keyed by its
 number (`"3": "16 drum samples, seed 41290318"`) and the number of the sound each
-instrument was last on. It also holds a `"stems"` object with each stem's lead-in in
-seconds (`"3 16 drum samples.wav": 1.250000`), and a `"random_scale"` object such as
+instrument was last on. It also holds a `"random_scale"` object such as
 `{ "scale": "Dorian", "key": "D" }` once a scale was playing during the song, which
 every instance with `random_scale` set to 1 takes over when the song is started again.
 A song written before the rename stores the key as `root`, and that is read when
@@ -183,8 +182,8 @@ that has already closed still has its sound saved. An instance started on a song
 already held, and sets every instrument to its saved sound: instruments that are already running take it on when the stems instance
 starts, and instances started later begin on it. A drum sound keeps the seed that draws
 its sample set, so it comes back the same. Closing a stems instance also writes a mix of
-every stem in its folder into the project folder, each placed at its lead-in and the lot
-peak-normalized to 1, named after the project folder itself, e.g.
+every stem in its folder into the project folder, mixed and peak-normalized to 1, named
+after the project folder itself, e.g.
 `2026-11-20-00-41-59.wav`. A copy of it goes into `D:\[Library]\[Audio]\[Works]`
 as well, when that folder exists.
 
@@ -230,12 +229,12 @@ played it, e.g. `3 16 drum samples.wav`, or after its input channel and audio de
 when it has no sound, e.g. `1 Focusrite USB ASIO.wav`, and one recorded while a stems instance runs is
 placed from the loop point of the pass it overlaps most, as the song builder places a
 pattern in its pass, so the audio lands where it was played in the song. That placement
-is a lead-in per stem in `song.json`, not silence in the file: a stem with a lead-in is
-cued that far into each loop, a take that mostly lies past a loop point carries a
-lead-in of zero and moves the others' lead-ins back with it, and the song's length is
-the last lead-in plus its stem, which the console's progress bar follows. A take with
-nothing above the noise floor is not written, and one shorter than the bar its
-instance sees is dropped first.
+is leading silence in the stem's own file: the take is written with the silence before
+it, and every stem is aligned to the earliest sound in the song, so a take that starts
+before the others pads them back and a stem that had the earliest sound lets the rest
+move forward when it goes. The song's length is its longest stem, which the console's
+progress bar follows. A take with nothing above the noise floor is not written, and one
+shorter than the bar its instance sees is dropped first.
 
 An instance playing a folder puts a bar of the loop before its rating and score, e.g.
 `[=========---------------] 0:12/0:32 bar 2000 ms  rating 0.000000  score 0.000000`: the
