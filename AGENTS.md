@@ -5,8 +5,8 @@ repo, not just the one that created this file.
 
 ## Communication 
 
-- Responses must be **short**.
-- Always **summarize**.
+Responses must be **short**.
+- Always **summarize**. No long essays. 
 - Don't list a bunch of stats.
 - Turn whole paragraphs into single sentences wherever possible. 
 - Be as concise, direct and to-the-point as possible.
