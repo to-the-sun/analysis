@@ -1785,19 +1785,11 @@ static DWORD WINAPI rating_worker(void *unused)
             folder[1023] = 0;
             LeaveCriticalSection(&ratingLock);
 
-            /* A new sound or the end of jamming starts the group over: its analyzers
-               go, so no score from before the change survives into the new rating. */
+            /* A new sound or the end of jamming clears the rating and the 15 s of
+               scores behind it; the analyzers themselves keep running. */
             if (reset) {
-                for (int i = 0; i < ratingCopyCount; i++) {
-                    analyzer_destroy(ratingCopies[i].analyzer);
-                    free(ratingCopies[i].block);
-                }
-                ratingCopyCount = 0;
-                analyzer_destroy(ratingOwn);
-                ratingOwn = NULL;
                 ratingStepHead = ratingStepCount = ratingCount = 0;
                 ratingSum = ratingValue = ratingBurst = 0.0;
-                pushed = 0;
             }
 
             if (rating_sync(mode, folder, sound)) pushed = 0;

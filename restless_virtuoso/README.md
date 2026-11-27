@@ -203,9 +203,9 @@ offline tools use. An instance playing a folder runs one analyzer per stem it pl
 an instance without one running runs a single analyzer over the audio it plays. The
 analyzers of an instance share one group buffer, so their scores accumulate together
 and give the instance one rating: the average of the scores from the last 15 s of
-audio, rolling. In an instrument instance a new sound starts the group again: its analyzers are
-rebuilt and the 15 s of scores behind the rating are cleared, so the rating starts
-over from zero. The console's last line shows it and replaces it as it changes,
+audio, rolling. In an instrument instance a new sound clears the 15 s of scores behind
+the rating, so the rating starts over from zero while the analyzers keep running. The
+console's last line shows it and replaces it as it changes,
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
@@ -222,7 +222,8 @@ separate jamming rating. It then records while the jamming rating is above the
 recitation rating, and its takes are written into that instance's `[stems]` folder.
 Closing that instance drops the take in progress and its memory instead of writing it
 as a project of its own, and the instrument leaves its jamming group: its stem
-analyzers go, its own analyzer starts again, and the rating starts again from zero.
+analyzers go and the 15 s of scores behind the rating are cleared, so the rating
+starts again from zero.
 With no stems instance running it records while its own rating is above zero, and each
 take is written to
 `D:\[Library]\[Audio]\[Works]\[Projects]\[YYYY-MM-DD-HH-MM-SS]\[stems]`, after which a
