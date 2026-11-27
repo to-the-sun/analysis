@@ -45,6 +45,7 @@ typedef struct {
     int buffer_updated;
     double highest_peak_ms;
     int highest_peak_valid;
+    double average_lag_ms;
     double min_score_seen;
     double max_score_seen;
     double demarcation_line;
@@ -72,6 +73,8 @@ typedef struct {
     double max_score_seen;
     double total_score_sum;
     int score_count;
+    double average_lag[BUFFER_LEN];
+    long long average_lag_count;
 } SharedTransientBuffer;
 
 typedef struct {
@@ -94,6 +97,8 @@ typedef struct {
     ct_lock_func unlock_func;
 
     double private_accumulated_buffer[BUFFER_LEN];
+    double private_average_lag[BUFFER_LEN];
+    long long private_average_lag_count;
     double buffer_times[BUFFER_LEN];
     double private_max_peak;
 

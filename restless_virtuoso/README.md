@@ -211,8 +211,8 @@ its stems when it plays a folder, its own audio when it has an analyzer of it. W
 that window holds no scores the score keeps the last value it showed, since a gap is
 no measurement rather than a drop to zero. Every instance shows the current bar length of its group before the
 rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
-history, which the analyzer gives as a time in the past and so is shown as its absolute
-value.
+history averaged every 99 ms, which the analyzer gives as a time in the past and so is
+shown as its absolute value.
 
 An instance playing a folder publishes its rating as the recitation rating. An
 instrument instance with one running adds one analyzer per stem that instance plays,

@@ -216,6 +216,8 @@ void analyzer_clear(TransientAnalyzer* self) {
         self->shared_buffer->max_score_seen = -DBL_MAX;
         self->shared_buffer->total_score_sum = 0;
         self->shared_buffer->score_count = 0;
+        memset(self->shared_buffer->average_lag, 0, sizeof(double) * win_len);
+        self->shared_buffer->average_lag_count = 0;
     }
 
     memset(self->private_accumulated_buffer, 0, sizeof(double) * win_len);
@@ -245,6 +247,8 @@ void analyzer_clear(TransientAnalyzer* self) {
 
     self->highest_peak_ms = -999.0;
     memset(self->bar_length_counts, 0, sizeof(self->bar_length_counts));
+    memset(self->private_average_lag, 0, sizeof(self->private_average_lag));
+    self->private_average_lag_count = 0;
 
     if (self->mel_spectrogram) memset(self->mel_spectrogram, 0, sizeof(double) * N_MELS * CACHE_SIZE);
     if (self->flux_envelopes) memset(self->flux_envelopes, 0, sizeof(float) * MAX_BANDS * CACHE_SIZE);
@@ -272,6 +276,17 @@ void analyzer_set_sample_rate(TransientAnalyzer* self, int sr) {
     int hop = (int)(sr * 0.001); self->frame_duration_ms = 1000.0 * (double)hop / (double)sr;
     int win_len = self->window_ms + 1;
     for (int i = 0; i < win_len; i++) self->buffer_times[i] = (double)(i - self->window_ms) * self->frame_duration_ms;
+}
+
+static void average_lag_sample(TransientAnalyzer* self) {
+    if (self->lock_func) self->lock_func(self->lock_obj);
+    double* acc_buf = self->shared_buffer ? self->shared_buffer->accumulated_buffer : self->private_accumulated_buffer;
+    double* lag = self->shared_buffer ? self->shared_buffer->average_lag : self->private_average_lag;
+    long long* count = self->shared_buffer ? &self->shared_buffer->average_lag_count : &self->private_average_lag_count;
+    int win_len = self->window_ms + 1;
+    double n = (double)++*count;
+    for (int i = 0; i < win_len; i++) lag[i] += (acc_buf[i] - lag[i]) / n;
+    if (self->unlock_func) self->unlock_func(self->lock_obj);
 }
 
 double analyzer_get_max_peak(TransientAnalyzer* self) {
@@ -451,6 +466,15 @@ void analyzer_update_metrics(TransientAnalyzer* self, int frame, AnalyzerMetrics
         }
     }
 
+    metrics_out->average_lag_ms = 0.0;
+    double* lag = self->shared_buffer ? self->shared_buffer->average_lag : self->private_average_lag;
+    long long lag_count = self->shared_buffer ? self->shared_buffer->average_lag_count : self->private_average_lag_count;
+    if (lag_count > 0 && m_len > 0) {
+        int lag_idx = 0;
+        for (int i = 1; i < m_len; i++) if (lag[i] > lag[lag_idx]) lag_idx = i;
+        if (lag[lag_idx] > 0.0) metrics_out->average_lag_ms = fabs(self->buffer_times[lag_idx]);
+    }
+
     if (self->unlock_func) self->unlock_func(self->lock_obj);
 
     if (metrics_out->highest_peak_valid) {
@@ -594,6 +618,7 @@ void analyzer_push_audio(TransientAnalyzer* self, const float* y, int len, int s
         self->cache_write_ptr = (self->cache_write_ptr + 1) % CACHE_SIZE;
         if (self->cache_count < CACHE_SIZE) self->cache_count++;
         self->total_frames_pushed++;
+        if (self->total_frames_pushed % 99 == 0) average_lag_sample(self);
     }
 
     self->total_samples_received = current_total_samples;
@@ -645,6 +670,7 @@ void analyzer_push_flux_direct(TransientAnalyzer* self, const float* flux_sample
         self->cache_write_ptr = (self->cache_write_ptr + 1) % CACHE_SIZE;
         if (self->cache_count < CACHE_SIZE) self->cache_count++;
         self->total_frames_pushed++;
+        if (self->total_frames_pushed % 99 == 0) average_lag_sample(self);
     }
     self->total_samples_received += len;
 }
