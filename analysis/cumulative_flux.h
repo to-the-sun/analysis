@@ -73,7 +73,6 @@ typedef struct {
     double max_score_seen;
     double total_score_sum;
     int score_count;
-    int nonzero_score_count;
     double average_lag[BUFFER_LEN];
     long long average_lag_count;
 } SharedTransientBuffer;
