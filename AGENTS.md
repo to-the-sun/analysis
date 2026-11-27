@@ -15,6 +15,8 @@ Responses must be **short**.
 - Don't be overly technical. It's good to use a more relaxed terminology as long as you're consistent and still accurate. 
 - Not every detail needs to be explained to the user. Generally keep explanations high-level. Be thorough in your understanding of the project but brief in your explanations of it. 
 - Don't describe things that haven't changed. That's just redundant and makes it sound like they have changed. If something is not mentioned then it can be assumed that it has not changed. This goes both ways and should be assumed by the agent as well as the user. 
+- Never present existing, intended behavior as a nuance, a risk or a change. Work out from the code whether something is already how it is meant to work before raising it; if it is, say nothing and leave it alone. "One nuance: ..." about behavior the code has always had reads as a change, and the user ends up asking you to undo work that was never needed.
+- For example, an isolated analyzer peak scoring exactly `0.0` is by design and always has been. Raising it as a nuance implied otherwise and produced a `cumulative_flux` change that only diluted a count. Keep explanations of a change to that change; don't pad them with how untouched code behaves.
 - Testing and verification are important, of course, but the user doesn't need to be told about it. The user will assume if you submit something, you have tested it thoroughly enough to have verified it is working correctly. 
 
 These things apply to messages sent to the user, reports, documentation and even comments in the code. 
