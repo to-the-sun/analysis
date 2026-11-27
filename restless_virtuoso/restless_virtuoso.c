@@ -5369,7 +5369,7 @@ static void process_buffer(int32_t index)
         sample_from_float(g.mixFloats, output, g.outFormat[j], frames);
         if (take.active) take_mix(g.mixFloats, frames);
         if (j == 0) {
-            if (audible(g.mixFloats, frames)) rating_audio(g.mixFloats, frames);
+            rating_audio(g.mixFloats, frames);
             if (recording.active) recording_audio(g.mixFloats, frames);
         }
     }
@@ -6035,8 +6035,9 @@ static void draw_meters(void)
         if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     }
 
-    length += snprintf(line + length, sizeof line - (size_t)length, "%sbar %.0f ms  rating %.6f  score %.6f",
-                       length ? "  " : "", ratingBar, rating_current(), ratingBurst);
+    length += snprintf(line + length, sizeof line - (size_t)length, "%sbar %.0f ms  rating %.6f%s  score %.6f",
+                       length ? "  " : "", ratingBar, rating_current(),
+                       instrumentMode && recording.active ? " @" : "", ratingBurst);
     if (length > (int)sizeof line - 1) length = (int)sizeof line - 1;
     if (length < g.lineWidth) {
         memset(line + length, ' ', (size_t)(g.lineWidth - length));

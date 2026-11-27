@@ -209,7 +209,8 @@ console's last line shows it and replaces it as it changes,
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
-no measurement rather than a drop to zero. Every instance shows the current bar length of its group before the
+no measurement rather than a drop to zero. An instrument instance recording a take puts
+`@` after its rating. Every instance shows the current bar length of its group before the
 rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
 history averaged every 99 ms, which the analyzer gives as a time in the past and so is
 shown as its absolute value.
@@ -268,7 +269,7 @@ recorded from its own input, and leaves the other devices' and inputs' stems pla
 - Changing the sample rate or buffer size in the control panel reopens the buffers
   automatically.
 - The master output is scaled by the Windows master volume, re-read while running.
-- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved. A block at or below the -60 dBFS noise floor becomes digital silence before the gain and the analyzers see it, so an idle device is neither lifted nor scored.
+- Every sound is auto gained: its gain is the difference between the loudest sample it has played this session and 1.0, so a quiet sound is lifted and a hot one is turned down. Each MIDI sound keeps its own peak and an ASIO input keeps one for the session. The gain is applied where the audio is produced, so the monitor and the takes both hear it. It is not saved. A block at or below the -60 dBFS noise floor becomes digital silence before the gain and the analyzers see it, so an idle device is neither lifted nor mistaken for sound.
 - A MIDI input that fails to open is retried, then reported with the Windows error code,
   its device name and driver version, and whether it opens without a callback.
 - Every run writes a new `restless_virtuoso-YYYY-MM-DD_HH-MM-SS.log` into the `[logs]` folder next to the exe with startup stages, every plugin call with its thread and timestamp, when plugin processing starts or resumes after a gap, the first call of each host callback, and errors. Whatever the plugins print goes into the same log, timestamped beside the host's lines: stdout as `plugin out:`, stderr as `plugin err:` and `OutputDebugString` as `plugin debug:`.
