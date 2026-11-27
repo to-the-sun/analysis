@@ -216,6 +216,7 @@ void analyzer_clear(TransientAnalyzer* self) {
         self->shared_buffer->max_score_seen = -DBL_MAX;
         self->shared_buffer->total_score_sum = 0;
         self->shared_buffer->score_count = 0;
+        self->shared_buffer->nonzero_score_count = 0;
         memset(self->shared_buffer->average_lag, 0, sizeof(double) * win_len);
         self->shared_buffer->average_lag_count = 0;
     }
@@ -379,6 +380,7 @@ int analyzer_process_peak(TransientAnalyzer* self, int p_idx, int global_p_idx, 
         if (result_out->total_score < self->shared_buffer->min_score_seen) self->shared_buffer->min_score_seen = result_out->total_score;
         if (result_out->total_score > self->shared_buffer->max_score_seen) self->shared_buffer->max_score_seen = result_out->total_score;
         self->shared_buffer->total_score_sum += result_out->total_score; self->shared_buffer->score_count++;
+        if (result_out->total_score != 0.0) self->shared_buffer->nonzero_score_count++;
     } else {
         if (result_out->total_score < self->private_min_score_seen) self->private_min_score_seen = result_out->total_score;
         if (result_out->total_score > self->private_max_score_seen) self->private_max_score_seen = result_out->total_score;

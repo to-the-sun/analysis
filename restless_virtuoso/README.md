@@ -209,7 +209,8 @@ console's last line shows it and replaces it as it changes,
 beside a `score`: the last 100 ms of scores, but from the instance's own side only —
 its stems when it plays a folder, its own audio when it has an analyzer of it. When
 that window holds no scores the score keeps the last value it showed, since a gap is
-no measurement rather than a drop to zero. An instrument instance recording a take puts
+no measurement rather than a drop to zero. A score of exactly zero reaches neither the
+rating nor the score. An instrument instance recording a take puts
 `O` after its rating. Every instance shows the current bar length of its group before the
 rating, in milliseconds, e.g. `bar 2000 ms`: the high point of the group's cumulative
 history averaged every 99 ms, which the analyzer gives as a time in the past and so is
