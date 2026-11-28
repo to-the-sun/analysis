@@ -2850,6 +2850,18 @@ static void refresh_playlist(void)
         ULONGLONG written = written_time(stemFiles[i]);
         if (written && written == stemWritten[i]) continue;
 
+        /* A file rewritten while the stems were aligned is re-read in its slot
+           without a word; only one that has gone stops playing. */
+        Track fresh;
+        if (written && decode_track(&fresh, stemFiles[i]) == 0) {
+            log_trace("re-read %ls at %.3fs\n", stemFiles[i], playlistElapsed);
+            free(stems[i].samples);
+            stems[i] = fresh;
+            stemWritten[i] = written;
+            changed = 1;
+            continue;
+        }
+
         stems[i].frames = 0;
         stems[i].position = 0;
         stems[i].fraction = 0.0;
