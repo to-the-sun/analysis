@@ -24,7 +24,7 @@ INVALID = (None, -1, 0xFFFFFFFFFFFFFFFF)
 VALUES = 15001                                      # BUFFER_LEN, the 15 s window in ms
 MAX_PEAK = VALUES * 8
 SCORE_COUNT = VALUES * 8 + 32
-LAG_OFFSET = VALUES * 8 + 48
+LAG_OFFSET = VALUES * 8 + 40
 LAG_COUNT = LAG_OFFSET + VALUES * 8
 SIZE = LAG_COUNT + 8
 
