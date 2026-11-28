@@ -6,10 +6,15 @@ measured region, placed once and never cut, gated or tiled. Every pattern's
 assigned pass loop point is aligned to one common song anchor.
 
 Usage:
-    python3 song_builder.py --spec report-spec.json --report-dir artifacts/pattern_reports
+    bash song_builder.sh --spec report-spec.json --report-dir artifacts/pattern_reports
+
+    Completed ratings are kept in overlap_ratings.json beside the report folder,
+    stamped with a fingerprint of the spec, so a build that dies resumes from
+    the last rating instead of starting the song again.
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -30,6 +35,30 @@ TAIL = 0.5
 HERE = os.path.dirname(os.path.abspath(__file__))
 RATER = os.path.join(HERE, 'flux_rating')
 RATER_SOURCES = [os.path.join(HERE, n) for n in ('flux_rating.c', 'cumulative_flux.c')]
+RATINGS = 'overlap_ratings.json'
+
+
+def ratings_path(report_dir):
+    return os.path.join(os.path.dirname(os.path.abspath(report_dir)), RATINGS)
+
+
+def spec_stamp(spec):
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+
+
+def load_ratings(path, stamp):
+    try:
+        with open(path) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return saved['ratings'] if saved.get('spec') == stamp else {}
+
+
+def save_ratings(path, stamp, ratings):
+    with open(path + '.tmp', 'w') as f:
+        json.dump({'spec': stamp, 'ratings': ratings}, f)
+    os.replace(path + '.tmp', path)
 
 
 def rater_executable():
@@ -150,6 +179,8 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
     pats = [(base, p) for base, m in metas for p in m['patterns']]
     if not pats:
         raise ValueError('reports have no patterns')
+    cache, stamp = ratings_path(report_dir), spec_stamp(spec)
+    ratings = load_ratings(cache, stamp)
     loop_times, pass_loops, pass_pads = {}, {}, {}
     for base, m in metas:
         pl = m.get('passes')
@@ -200,6 +231,10 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
 
     def proposed_rating(members, start, end):
         """Rate the contested span in every stem, with a lead-in for the 15 s window."""
+        key = '%.6f-%.6f %s' % (start, end, ' '.join(sorted(
+            '%s#%s' % (pats[k][0], pats[k][1]['id']) for k in members)))
+        if key in ratings:
+            return ratings[key]
         rater = rater_executable()
         first = int(round(max(0.0, start - LEAD_IN) * sr))
         stop = min(max(ends[k] for k in members), int(round((end + TAIL) * sr)))
@@ -221,9 +256,12 @@ def build_song(report_dir, reports, spec, master_name='finished_song.wav'):
             run = subprocess.run([rater, '--score'] + list(span) + paths, capture_output=True, text=True)
             if run.returncode != 0:
                 raise RuntimeError('song rating failed: %s' % run.stderr.strip())
-            return float(run.stdout.strip().splitlines()[-1])
+            rating = float(run.stdout.strip().splitlines()[-1])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        ratings[key] = rating
+        save_ratings(cache, stamp, ratings)
+        return rating
 
     keep = []
     for i, (base, p) in enumerate(pats):
