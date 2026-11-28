@@ -29,6 +29,7 @@ LAG_COUNT = LAG_OFFSET + VALUES * 8
 SIZE = LAG_COUNT + 8
 WINDOW_MS = VALUES - 1                              # one value per ms, oldest first
 TICK_MS = 3000
+UNSETTLED_MS = 99                                   # the lag average rewritten every 99 frames
 
 BACKGROUND = "#14161a"
 HISTORY_COLOUR = "#7fd1ff"
@@ -182,7 +183,6 @@ class InstanceWindow(tk.Toplevel):
         self.pid = pid
         self.handle = handle
         self.address = module_base(handle) + rva
-        self.ceiling = {HISTORY_COLOUR: 1e-6, LAG_COLOUR: 1e-6}
         self.plots = {}
         self.job = None
         self.caption = "pid %d  buffer 0x%x  %s" % (pid, self.address, path)
@@ -238,15 +238,15 @@ class InstanceWindow(tk.Toplevel):
         if width < 8 or height < 8:
             return
 
-        ceiling = max(self.ceiling[colour] * 0.99, max(values) * 1.1, 1e-6)
-        self.ceiling[colour] = ceiling
+        # Scale to the tallest point on show, ignoring the tail still being averaged.
+        ceiling = max(max(values[:len(values) - UNSETTLED_MS]) * 1.1, 1e-6)
 
         floor = height - 22
         step = max(1, len(values) // width)
         points = []
         for start in range(0, len(values), step):
             points.append(start * (width - 1) / (len(values) - 1))
-            points.append(floor - max(values[start:start + step]) / ceiling * (floor - 6))
+            points.append(max(6, floor - max(values[start:start + step]) / ceiling * (floor - 6)))
 
         canvas.delete("all")
         canvas.create_line(*points, fill=colour, width=1)
