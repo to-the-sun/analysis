@@ -4,11 +4,13 @@ The cumulative history and average lag buffers live only in an instance's own
 memory, so each window reads them out of its process with ReadProcessMemory at the
 ratingScores symbol its linked exe carries. Nothing in the app has to change.
 Double-click this file; a window opens for every instance it finds, and for each
-one that starts while it runs.
+one that starts while it runs. Anything that goes wrong is printed in the console
+this script runs in and shown in the window it belongs to.
 """
 
 import ctypes
 import struct
+import sys
 import tkinter as tk
 import traceback
 from ctypes import wintypes
@@ -57,6 +59,8 @@ kernel32.ReadProcessMemory.restype = wintypes.BOOL
 kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
                                                 wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
 kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.c_void_p] * 4
+kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+STILL_ACTIVE = 259
 psapi.EnumProcessModules.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE),
                                      wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
 
@@ -74,6 +78,11 @@ def created(handle):
     if not kernel32.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
         return 0
     return times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+
+
+def alive(handle):
+    code = wintypes.DWORD()
+    return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
 
 
 def module_base(handle):
@@ -138,15 +147,20 @@ def read_group(handle, address):
     buffer = ctypes.create_string_buffer(SIZE)
     read = ctypes.c_size_t()
     if not kernel32.ReadProcessMemory(handle, ctypes.c_void_p(address), buffer, SIZE,
-                                      ctypes.byref(read)) or read.value != SIZE:
-        return None
+                                      ctypes.byref(read)):
+        raise OSError(ctypes.get_last_error(),
+                      "ReadProcessMemory at 0x%x, %d of %d bytes" % (address, read.value, SIZE))
+    if read.value != SIZE:
+        raise OSError(0, "ReadProcessMemory at 0x%x read %d of %d bytes"
+                      % (address, read.value, SIZE))
 
     raw = buffer.raw
     scores = struct.unpack_from("<i", raw, SCORE_COUNT)[0]
     lags = struct.unpack_from("<q", raw, LAG_COUNT)[0]
     peak = struct.unpack_from("<d", raw, MAX_PEAK)[0]
     if not (0 <= scores < 1 << 31 and 0 <= lags < 1 << 40 and -1e300 < peak < 1e300):
-        return None
+        raise ValueError("group buffer at 0x%x does not look like one: scores %d, lags %d, peak %r"
+                         % (address, scores, lags, peak))
 
     return (struct.unpack_from("<%dd" % VALUES, raw, 0),
             struct.unpack_from("<%dd" % VALUES, raw, LAG_OFFSET))
@@ -156,22 +170,28 @@ class InstanceWindow(tk.Toplevel):
     """One instance's group buffer, read from that instance as it runs."""
 
     def __init__(self, watcher, count, pid, handle, path):
+        rva = symbol_rva(path, "ratingScores")
+        if not rva:
+            raise LookupError("no ratingScores symbol in %s" % path)
+
         super().__init__(watcher.root)
         self.watcher = watcher
         self.pid = pid
         self.handle = handle
-        self.address = module_base(handle) + symbol_rva(path, "ratingScores")
+        self.address = module_base(handle) + rva
         self.ceiling = {HISTORY_COLOUR: 1e-6, LAG_COLOUR: 1e-6}
         self.plots = {}
         self.job = None
+        self.caption = "pid %d  buffer 0x%x  %s" % (pid, self.address, path)
 
         self.title("group buffer  pid %d" % pid)
         self.geometry("900x560+%d+%d" % (420 + 28 * count, 40 + 28 * count))
         self.configure(bg=BACKGROUND)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
-        tk.Label(self, text="pid %d  %s" % (pid, path), anchor="w", fg=INK, bg=BACKGROUND,
-                 font=("Consolas", 9)).pack(fill="x", padx=12, pady=(10, 0))
+        self.status = tk.Label(self, text=self.caption, anchor="w", fg=INK, bg=BACKGROUND,
+                               justify="left", wraplength=860, font=("Consolas", 9))
+        self.status.pack(fill="x", padx=12, pady=(10, 0))
         for label, colour in PLOT_LABELS:
             frame = tk.Frame(self, bg=BACKGROUND)
             tk.Label(frame, text=label, anchor="w", fg=colour, bg=BACKGROUND,
@@ -184,13 +204,20 @@ class InstanceWindow(tk.Toplevel):
         self.job = self.after(0, self.tick)
 
     def tick(self):
-        data = read_group(self.handle, self.address) if self.handle and self.address else None
-        if data is None:
-            self.close()
-            return
-        self.plot(HISTORY_COLOUR, data[0])
-        self.plot(LAG_COLOUR, data[1])
-        self.job = self.after(80, self.tick)
+        try:
+            history, lag = read_group(self.handle, self.address)
+            self.plot(HISTORY_COLOUR, history)
+            self.plot(LAG_COLOUR, lag)
+            self.status.config(text=self.caption, fg=INK)
+        except Exception as error:
+            if not alive(self.handle):
+                self.close()
+                return
+            message = "%s: %s" % (type(error).__name__, error)
+            if message != self.status.cget("text"):
+                self.status.config(text=message, fg=LAG_COLOUR)
+                traceback.print_exc()
+        self.job = self.after(100, self.tick)
 
     def close(self):
         if self.job is not None:
@@ -251,7 +278,11 @@ class Watcher:
                 continue
             self.count += 1
             self.seen.add(pid)
-            self.windows[pid] = InstanceWindow(self, self.count, pid, handle, path)
+            try:
+                self.windows[pid] = InstanceWindow(self, self.count, pid, handle, path)
+            except Exception:
+                kernel32.CloseHandle(handle)
+                traceback.print_exc()
         self.root.after(1000, self.scan)
 
 
@@ -267,6 +298,8 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except SystemExit:
         raise
+    except KeyboardInterrupt:
+        pass
     except BaseException:
-        from tkinter import messagebox
-        messagebox.showerror("group buffer watch", traceback.format_exc())
+        traceback.print_exc()
+        input("press Enter to close")
