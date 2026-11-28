@@ -75,6 +75,10 @@ typedef struct {
     int score_count;
     double average_lag[BUFFER_LEN];
     long long average_lag_count;
+    // Appended, so the offsets a watcher pins on the fields above stay put.
+    double* lag_samples;        // ring of the samples inside the window
+    double* lag_sums;
+    long long lag_sample_head;
 } SharedTransientBuffer;
 
 typedef struct {
@@ -99,6 +103,9 @@ typedef struct {
     double private_accumulated_buffer[BUFFER_LEN];
     double private_average_lag[BUFFER_LEN];
     long long private_average_lag_count;
+    double* private_lag_samples;
+    double* private_lag_sums;
+    long long private_lag_sample_head;
     double buffer_times[BUFFER_LEN];
     double private_max_peak;
 
