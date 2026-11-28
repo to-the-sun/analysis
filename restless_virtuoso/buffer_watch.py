@@ -27,11 +27,14 @@ SCORE_COUNT = VALUES * 8 + 32
 LAG_OFFSET = VALUES * 8 + 40
 LAG_COUNT = LAG_OFFSET + VALUES * 8
 SIZE = LAG_COUNT + 8
+WINDOW_MS = VALUES - 1                              # one value per ms, oldest first
+TICK_MS = 3000
 
 BACKGROUND = "#14161a"
 HISTORY_COLOUR = "#7fd1ff"
 LAG_COLOUR = "#ffb36b"
 INK = "#8b93a1"
+AXIS = "#31363f"
 PLOT_LABELS = (("cumulative history", HISTORY_COLOUR), ("average lag", LAG_COLOUR))
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -238,18 +241,27 @@ class InstanceWindow(tk.Toplevel):
         ceiling = max(self.ceiling[colour] * 0.99, max(values) * 1.1, 1e-6)
         self.ceiling[colour] = ceiling
 
+        floor = height - 22
         step = max(1, len(values) // width)
         points = []
         for start in range(0, len(values), step):
             points.append(start * (width - 1) / (len(values) - 1))
-            points.append(height - 3 - max(values[start:start + step]) / ceiling * (height - 12))
+            points.append(floor - max(values[start:start + step]) / ceiling * (floor - 6))
 
         canvas.delete("all")
         canvas.create_line(*points, fill=colour, width=1)
-        canvas.create_text(6, height - 6, text="15 s ago", fill=INK, anchor="sw",
-                           font=("Consolas", 8))
-        canvas.create_text(width - 6, height - 6, text="now", fill=INK, anchor="se",
-                           font=("Consolas", 8))
+        canvas.create_line(0, floor, width - 1, floor, fill=AXIS)
+        for ms in range(0, WINDOW_MS + 1, TICK_MS):
+            x = (WINDOW_MS - ms) * (width - 1) / WINDOW_MS
+            canvas.create_line(x, floor, x, floor + 3, fill=AXIS)
+            if ms == WINDOW_MS:
+                label, anchor = "-%d ms" % ms, "nw"
+            elif ms:
+                label, anchor = "-%d" % ms, "n"
+            else:
+                label, anchor = "0", "ne"
+            canvas.create_text(x, floor + 5, text=label, fill=INK, anchor=anchor,
+                               font=("Consolas", 8))
 
 
 class Watcher:
