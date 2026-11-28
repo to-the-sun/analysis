@@ -1,9 +1,10 @@
-"""Live view of the shared group buffer of a running restless_virtuoso.exe.
+"""Live view of the shared group buffer of every running restless_virtuoso.exe.
 
-The cumulative history and average lag buffers live only in the instance's own
-memory, so they are read out of the running process with ReadProcessMemory at the
+The cumulative history and average lag buffers live only in an instance's own
+memory, so each window reads them out of its process with ReadProcessMemory at the
 ratingScores symbol its linked exe carries. Nothing in the app has to change.
-Double-click this file; it finds the newest running instance by itself.
+Double-click this file; a window opens for every instance it finds, and for each
+one that starts while it runs.
 """
 
 import ctypes
@@ -29,6 +30,7 @@ BACKGROUND = "#14161a"
 HISTORY_COLOUR = "#7fd1ff"
 LAG_COLOUR = "#ffb36b"
 INK = "#8b93a1"
+PLOT_LABELS = (("cumulative history", HISTORY_COLOUR), ("average lag", LAG_COLOUR))
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 psapi = ctypes.WinDLL("psapi", use_last_error=True)
@@ -84,7 +86,7 @@ def module_base(handle):
 
 
 def instances():
-    """The running instances, newest last."""
+    """The running instances, oldest first."""
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snapshot in INVALID:
         return []
@@ -150,24 +152,28 @@ def read_group(handle, address):
             struct.unpack_from("<%dd" % VALUES, raw, LAG_OFFSET))
 
 
-class Watch:
-    def __init__(self, root):
-        self.root = root
-        self.target = None
-        self.address = 0
+class InstanceWindow(tk.Toplevel):
+    """One instance's group buffer, read from that instance as it runs."""
+
+    def __init__(self, watcher, count, pid, handle, path):
+        super().__init__(watcher.root)
+        self.watcher = watcher
+        self.pid = pid
+        self.handle = handle
+        self.address = module_base(handle) + symbol_rva(path, "ratingScores")
         self.ceiling = {HISTORY_COLOUR: 1e-6, LAG_COLOUR: 1e-6}
         self.plots = {}
+        self.job = None
 
-        root.title("restless_virtuoso  shared group buffer")
-        root.geometry("900x560")
-        root.configure(bg=BACKGROUND)
+        self.title("group buffer  pid %d" % pid)
+        self.geometry("900x560+%d+%d" % (420 + 28 * count, 40 + 28 * count))
+        self.configure(bg=BACKGROUND)
+        self.protocol("WM_DELETE_WINDOW", self.close)
 
-        self.status = tk.Label(root, text="", anchor="w", fg=INK, bg=BACKGROUND,
-                               font=("Consolas", 9))
-        self.status.pack(fill="x", padx=12, pady=(10, 0))
-
-        for label, colour in (("cumulative history", HISTORY_COLOUR), ("average lag", LAG_COLOUR)):
-            frame = tk.Frame(root, bg=BACKGROUND)
+        tk.Label(self, text="pid %d  %s" % (pid, path), anchor="w", fg=INK, bg=BACKGROUND,
+                 font=("Consolas", 9)).pack(fill="x", padx=12, pady=(10, 0))
+        for label, colour in PLOT_LABELS:
+            frame = tk.Frame(self, bg=BACKGROUND)
             tk.Label(frame, text=label, anchor="w", fg=colour, bg=BACKGROUND,
                      font=("Consolas", 10)).pack(fill="x")
             canvas = tk.Canvas(frame, bg="#0b0c0f", height=230, highlightthickness=0)
@@ -175,42 +181,26 @@ class Watch:
             frame.pack(fill="both", expand=True, padx=12)
             self.plots[colour] = canvas
 
-        root.after(0, self.tick)
+        self.job = self.after(0, self.tick)
 
     def tick(self):
-        data = self.read()
+        data = read_group(self.handle, self.address) if self.handle and self.address else None
         if data is None:
-            self.status.config(text="waiting for a running restless_virtuoso.exe")
-        else:
-            self.status.config(text="pid %d  %s" % (self.target[1], self.target[3]))
-            self.plot(HISTORY_COLOUR, data[0])
-            self.plot(LAG_COLOUR, data[1])
-        self.root.after(80, self.tick)
-
-    def attach(self):
-        found = instances()
-        if not found:
+            self.close()
             return
-        for other in found[:-1]:
-            kernel32.CloseHandle(other[2])
-        self.target = found[-1]
+        self.plot(HISTORY_COLOUR, data[0])
+        self.plot(LAG_COLOUR, data[1])
+        self.job = self.after(80, self.tick)
 
-    def read(self):
-        if self.target is None:
-            self.attach()
-            if self.target is None:
-                return None
-
-        handle, path = self.target[2], self.target[3]
-        if not self.address:
-            self.address = module_base(handle) + symbol_rva(path, "ratingScores")
-
-        data = read_group(handle, self.address) if self.address else None
-        if data is None:
-            kernel32.CloseHandle(handle)
-            self.target = None
-            self.address = 0
-        return data
+    def close(self):
+        if self.job is not None:
+            self.after_cancel(self.job)
+            self.job = None
+        if self.handle:
+            kernel32.CloseHandle(self.handle)
+            self.handle = None
+        self.watcher.windows.pop(self.pid, None)
+        self.destroy()
 
     def plot(self, colour, values):
         canvas = self.plots[colour]
@@ -235,9 +225,39 @@ class Watch:
                            font=("Consolas", 8))
 
 
+class Watcher:
+    """Opening windows for the instances that are running, and for the ones that start."""
+
+    def __init__(self, root):
+        self.root = root
+        self.windows = {}
+        self.seen = set()
+        self.count = 0
+
+        root.title("group buffer watch")
+        root.geometry("380x64+40+40")
+        root.configure(bg=BACKGROUND)
+        tk.Label(root, text="a window opens for each running instance, and each new one",
+                 fg=INK, bg=BACKGROUND, wraplength=350, justify="left",
+                 font=("Consolas", 9)).pack(padx=12, pady=12, anchor="w")
+        root.after(0, self.scan)
+
+    def scan(self):
+        found = instances()
+        self.seen &= {pid for _, pid, _, _ in found}
+        for _, pid, handle, path in found:
+            if pid in self.seen:
+                kernel32.CloseHandle(handle)
+                continue
+            self.count += 1
+            self.seen.add(pid)
+            self.windows[pid] = InstanceWindow(self, self.count, pid, handle, path)
+        self.root.after(1000, self.scan)
+
+
 def main():
     root = tk.Tk()
-    Watch(root)
+    Watcher(root)
     root.mainloop()
     return 0
 
